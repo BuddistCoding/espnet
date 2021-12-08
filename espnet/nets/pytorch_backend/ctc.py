@@ -177,6 +177,17 @@ class CTC(torch.nn.Module):
         """
         return torch.argmax(self.ctc_lo(hs_pad), dim=2)
 
+    # My own implementation
+    def topk(self, hs_pad, k):
+        """ get topk of frame activation
+
+        :param torch.Tensor hs_pad: 3d tensor (B, Tmax, eprojs)
+        :param int k: number of top k value
+        :return: argmax applied 2d tensor (B, Tmax)
+        :rtype: torch.Tensor
+        """
+        return torch.topk(self.ctc_lo(hs_pad), k)
+
     def forced_align(self, h, y, blank_id=0):
         """forced alignment.
 

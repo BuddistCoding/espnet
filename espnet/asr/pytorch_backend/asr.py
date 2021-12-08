@@ -406,6 +406,11 @@ def train(args):
         logging.info("stream{}: input dims : {}".format(i + 1, idim_list[i]))
     logging.info("#output dims: " + str(odim))
 
+
+    # phoneme dim
+    pdim = int(valid_json[utts[0]]["phoneme"][0]["shape"][-1])
+    logging.info("#phoneme dims: " + str(pdim))
+
     # specify attention, CTC, hybrid mode
     if "transducer" in args.model_module:
         if (
