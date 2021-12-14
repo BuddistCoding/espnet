@@ -20,8 +20,8 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=
-train_config=conf/train.yaml
+preprocess_config=conf/specaug.yaml
+train_config=conf/tuning/train_pytorch_circular_transformer.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -38,21 +38,21 @@ recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.bes
 n_average=10
 
 # data
-data=/export/a05/xna/data
+data=/mnt/nas1/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
 tag="" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
-
+ 
 # Set bash to 'debug' mode, it will exit on :
 # -e 'error', -u 'undefined variable', -o ... 'error in pipeline', -x 'print commands',
 set -e
 set -u
 set -o pipefail
 
-train_set=train_sp
+train_set=train
 train_dev=dev
 recog_set="dev test"
 
@@ -95,11 +95,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     utils/fix_data_dir.sh data/test
 
     # speed-perturbed
-    utils/perturb_data_dir_speed.sh 0.9 data/train data/temp1
-    utils/perturb_data_dir_speed.sh 1.0 data/train data/temp2
-    utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
-    utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
-    rm -r data/temp1 data/temp2 data/temp3
+    # utils/perturb_data_dir_speed.sh 0.9 data/train data/temp1
+    # utils/perturb_data_dir_speed.sh 1.0 data/train data/temp2
+    # utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
+    # utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
+    # rm -r data/temp1 data/temp2 data/temp3
+
     steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
         data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
     utils/fix_data_dir.sh data/${train_set}
@@ -130,6 +131,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 fi
 
 dict=data/lang_1char/${train_set}_units.txt
+phn_dict=data/lang_1char/${train_set}_phn_units.txt
 echo "dictionary: ${dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
@@ -142,56 +144,65 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${dict}
     wc -l ${dict}
 
+    echo "make phoneme dictionary"
+    echo "<unk> 1" > ${phn_dict}
+    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text | cut -f 2- -d" " | tr " " "\n" \
+    | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${phn_dict}
+    wc -l ${phn_dict}
+
     echo "make json files"
     data2json.sh --feat ${feat_tr_dir}/feats.scp \
-		 data/${train_set} ${dict} > ${feat_tr_dir}/data.json
+		 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
+        
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \
-		     data/${rtask} ${dict} > ${feat_recog_dir}/data.json
+		     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
     done
 fi
 
 # you can skip this and remove --rnnlm option in the recognition (stage 5)
-if [ -z ${lmtag} ]; then
-    lmtag=$(basename ${lm_config%.*})
-fi
-lmexpname=train_rnnlm_${backend}_${lmtag}
-lmexpdir=exp/${lmexpname}
-mkdir -p ${lmexpdir}
+# if [ -z ${lmtag} ]; then
+#     lmtag=$(basename ${lm_config%.*})
+# fi
+# lmexpname=train_rnnlm_${backend}_${lmtag}
+# lmexpdir=exp/${lmexpname}
+# mkdir -p ${lmexpdir}
 
-ngramexpname=train_ngram
-ngramexpdir=exp/${ngramexpname}
-if [ -z ${ngramtag} ]; then
-    ngramtag=${n_gram}
-fi
-mkdir -p ${ngramexpdir}
+# ngramexpname=train_ngram
+# ngramexpdir=exp/${ngramexpname}
+# if [ -z ${ngramtag} ]; then
+#     ngramtag=${n_gram}
+# fi
+# mkdir -p ${ngramexpdir}
 
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
-    echo "stage 3: LM Preparation"
-    lmdatadir=data/local/lm_train
-    mkdir -p ${lmdatadir}
-    text2token.py -s 1 -n 1 data/train/text | cut -f 2- -d" " \
-        > ${lmdatadir}/train.txt
-    text2token.py -s 1 -n 1 data/${train_dev}/text | cut -f 2- -d" " \
-        > ${lmdatadir}/valid.txt
 
-    ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
-        lm_train.py \
-        --config ${lm_config} \
-        --ngpu ${ngpu} \
-        --backend ${backend} \
-        --verbose 1 \
-        --outdir ${lmexpdir} \
-        --tensorboard-dir tensorboard/${lmexpname} \
-        --train-label ${lmdatadir}/train.txt \
-        --valid-label ${lmdatadir}/valid.txt \
-        --resume ${lm_resume} \
-        --dict ${dict}
+
+# if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
+#     echo "stage 3: LM Preparation"
+#     lmdatadir=data/local/lm_train
+#     mkdir -p ${lmdatadir}
+#     text2token.py -s 1 -n 1 data/train/text | cut -f 2- -d" " \
+#         > ${lmdatadir}/train.txt
+#     text2token.py -s 1 -n 1 data/${train_dev}/text | cut -f 2- -d" " \
+#         > ${lmdatadir}/valid.txt
+
+#     ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
+#         lm_train.py \
+#         --config ${lm_config} \
+#         --ngpu ${ngpu} \
+#         --backend ${backend} \
+#         --verbose 1 \
+#         --outdir ${lmexpdir} \
+#         --tensorboard-dir tensorboard/${lmexpname} \
+#         --train-label ${lmdatadir}/train.txt \
+#         --valid-label ${lmdatadir}/valid.txt \
+#         --resume ${lm_resume} \
+#         --dict ${dict}
     
-    lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
-    build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
-fi
+#     lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
+#     build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
+# fi
 
 
 if [ -z ${tag} ]; then
@@ -225,7 +236,8 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --verbose ${verbose} \
         --resume ${resume} \
         --train-json ${feat_tr_dir}/data.json \
-        --valid-json ${feat_dt_dir}/data.json
+        --valid-json ${feat_dt_dir}/data.json \
+        --phn_dict ${phn_dict}
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
@@ -271,8 +283,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            --rnnlm ${lmexpdir}/rnnlm.model.best \
-            ${recog_v2_opts}
+            # --rnnlm ${lmexpdir}/rnnlm.model.best \
+            # ${recog_v2_opts}
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 

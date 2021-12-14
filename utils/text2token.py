@@ -9,7 +9,7 @@ import codecs
 import re
 import sys
 
-from pypinyin import pinyin
+from pypinyin import pinyin, lazy_pinyin, Style
 
 is_python2 = sys.version_info[0] == 2
 
@@ -107,7 +107,7 @@ def main():
         if args.trans_type == "phn":
             a = a.split(" ")
         elif args.trans_type == "zhphn":
-            a = pinyin(a)
+            a = a.split()
         else:
             if len(match_pos) > 0:
                 chars = []

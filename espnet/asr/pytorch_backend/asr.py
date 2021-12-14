@@ -225,10 +225,11 @@ class CustomUpdater(StandardUpdater):
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), self.grad_clip_threshold
         )
-        logging.info("grad norm={}".format(grad_norm))
+        logging.warning(f"grad norm={grad_norm}")
         if math.isnan(grad_norm):
-            logging.warning("grad norm is nan. Do not update model.")
+            logging.warning(f"epoch:{self.epoch} : grad norm is nan. Do not update model.")
         else:
+            logging.warning(f"epoch:{self.epoch} : update!!")
             optimizer.step()
         optimizer.zero_grad()
 
@@ -408,8 +409,10 @@ def train(args):
 
 
     # phoneme dim
-    pdim = int(valid_json[utts[0]]["phoneme"][0]["shape"][-1])
-    logging.info("#phoneme dims: " + str(pdim))
+    if (args.phn_ctc_weight > 0.0):
+        args.pdim = int(valid_json[utts[0]]["output"][0]["pho_shape"].split(",")[-1])
+        logging.info("#phoneme dims: " + str(args.pdim))
+
 
     # specify attention, CTC, hybrid mode
     if "transducer" in args.model_module:

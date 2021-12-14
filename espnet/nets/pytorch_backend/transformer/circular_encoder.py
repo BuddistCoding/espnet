@@ -314,9 +314,12 @@ class Encoder(torch.nn.Module):
         else:
             xs = self.embed(xs)
 
-        if self.intermediate_layers is None:
+        if self.intermediate_layers is None and (self.phoneme_input_layer is None or self.phoneme_output_layer is None):
             xs, masks = self.encoders(xs, masks)
-        else:
+            if self.phoneme_input_layer is not None or self.phoneme_output_layer is not None:
+                logging.warning("You shold point out both phoneme input layer and output layer so that can output phoneme CTC")
+
+        elif self.intermediate_layers:
             intermediate_outputs = []
             for layer_idx, encoder_layer in enumerate(self.encoders):
                 xs, masks = encoder_layer(xs, masks)
@@ -331,26 +334,29 @@ class Encoder(torch.nn.Module):
                         encoder_output = self.after_norm(encoder_output)
                     intermediate_outputs.append(encoder_output)
 
+        elif self.phoneme_output_layer:
+            phoneme_ctc_output = []
+            for layer_idx, encoder_layer in enumerate(self.encoders):
+                xs, masks = encoder_layer(xs, masks)
+
+                if (layer_idx+1 in self.phoneme_output_layer):
+                    encoder_output = xs
+                    if self.normalize_before:
+                        encoder_output = self.after_norm(encoder_output)
+                    phoneme_ctc_output.append(encoder_output)
+
         if self.normalize_before:
             xs = self.after_norm(xs)
 
-        if self.intermediate_layers is not None:
-            return xs, masks, intermediate_outputs
-        return xs, masks
+        if self.intermediate_layers:
+            return xs, masks, intermediate_outputs, None
         
-        if self.phoneme_input_layer is not None and self.phoneme_output_layer is not None:
-                phoneme_ctc_input = []
-                for layer_idx, encoder_layer in enumerate(self.encoders):
-                    xs, masks = encoder_layer(xs, masks)
+        if self.phoneme_output_layer:
+            return xs, masks, None , phoneme_ctc_output
 
-                    if (layer_idx+1 in phoneme_output_layer):
-                        encoder_output = xs
-                        if self.normalize_before:
-                            encoder_output = self.after_norm(encoder_output)
-                    phoneme_ctc_input.append(encoder_output)
+        return xs, masks, None, None
+        
 
-        elif self.phoneme_input_layer is not None or self.phoneme_output_layer is not None:
-                logging.warning("You shold point out both phoneme input layer and output layer so that can output phoneme CTC")
 
     def forward_one_step(self, xs, masks, cache=None):
         """Encode input frame.

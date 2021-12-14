@@ -167,6 +167,44 @@ def add_arguments_transformer_common(group):
         type=float,
         help="Skip probability of stochastic layer regularization",
     )
+
+    # phoneme CTC Related
+    group.add_argument(
+        "--phn-ctc-weight",
+        default= 0.0,
+        type=float,
+        help="",
+    )
+
+    group.add_argument(
+        "--phoneme-input-layer",
+        default="",
+        type=str,
+        help="",
+    )
+
+    group.add_argument(
+        "--phoneme-output-layer",
+        default="",
+        type=str,
+        help="",
+    )
+
+    group.add_argument(
+        "--text-elayers",
+        default=4,
+        type=int,
+        help="",
+    )
+
+    group.add_argument(
+        "--pdim",
+        default=0,
+        type=int,
+        help="",
+    )
+
+
     # Decoder
     group.add_argument(
         "--dlayers", default=1, type=int, help="Number of decoder layers"
