@@ -225,11 +225,9 @@ class CustomUpdater(StandardUpdater):
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), self.grad_clip_threshold
         )
-        logging.warning(f"grad norm={grad_norm}")
         if math.isnan(grad_norm):
             logging.warning(f"epoch:{self.epoch} : grad norm is nan. Do not update model.")
         else:
-            logging.warning(f"epoch:{self.epoch} : update!!")
             optimizer.step()
         optimizer.zero_grad()
 
