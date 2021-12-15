@@ -141,12 +141,21 @@ class LoadInputsAndTargets(object):
                     x_feats_dict.setdefault(info["output"][1]["name"], []).append(x)
 
                 for idx, inp in enumerate(info["output"]):
+                    # logging.warning(f'inp:{inp}')
                     if "tokenid" in inp:
                         # ======= Legacy format for output =======
                         # {"output": [{"tokenid": "1 2 3 4"}])
                         x = np.fromiter(
                             map(int, inp["tokenid"].split()), dtype=np.int64
                         )
+
+                        y_feats_dict.setdefault(inp["name"], []).append(x) 
+
+                        if "phonemeid" in inp:
+                            x = np.fromiter(
+                                map(int, inp["phonemeid"].split()), dtype=np.int64
+                            )
+                            y_feats_dict.setdefault(inp["name"]+"_phn", []).append(x)
                     else:
                         # ======= New format =======
                         # {"input":
@@ -156,8 +165,10 @@ class LoadInputsAndTargets(object):
                         x = self._get_from_loader(
                             filepath=inp["feat"], filetype=inp.get("filetype", "mat")
                         )
-
-                    y_feats_dict.setdefault(inp["name"], []).append(x)
+                        
+                        y_feats_dict.setdefault(inp["name"], []).append(x)   
+                
+                # logging.warning(y_feats_dict)
 
         if self.mode == "asr":
             return_batch, uttid_list = self._create_batch_asr(

@@ -250,7 +250,14 @@ class E2E(ASRInterface, torch.nn.Module):
         src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
         hs_pad, hs_mask, hs_intermediates, hs_phoneme = self.encoder(xs_pad, src_mask)
         self.hs_pad = hs_pad
-
+        # FOR Phoneme CTC
+        ys_phn = None
+        if len(ys_pad) == 1:
+            ys_pad = ys_pad[0]
+        elif len (ys_pad) == 2:
+            ys_pad, ys_phn = ys_pad
+        assert (len(ys_pad) > 2)
+         
         # 2. forward decoder
         if self.decoder is not None:
             ys_in_pad, ys_out_pad = add_sos_eos(
@@ -300,7 +307,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
             if self.phn_ctc_weight > 0:
                 for hs_phn in hs_phoneme:
-                    loss_phn = self.phn_ctc(hs_phn.view(batch_size, -1, self.adim), hs_len, ys_pad)
+                    loss_phn = self.phn_ctc(hs_phn.view(batch_size, -1, self.adim), hs_len, ys_phn)
                     loss_phn_ctc += loss_phn
                 loss_phn_ctc /= len(hs_phoneme)
 
