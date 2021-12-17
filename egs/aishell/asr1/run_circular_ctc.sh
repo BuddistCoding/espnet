@@ -38,7 +38,7 @@ recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.bes
 n_average=10
 
 # data
-data=/mnt/nas1/ASR_Corpus
+data=/home/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
@@ -259,7 +259,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
              "(hence ngram is ignored)"
         recog_v2_opts=""
     else
-        recog_v2_opts="--ngram-model ${ngramexpdir}/${n_gram}gram.bin --api v2"
+        recog_v2_opts=""
     fi
 
     pids=() # initialize pids

@@ -127,23 +127,23 @@ class E2E(ASRInterface, torch.nn.Module):
                 phoneme_output_layer=self.phoneme_output_layer,
             )
 
-            self.text_encoder = Encoder(
-                idim=idim,
-                selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
-                attention_dim=args.adim,
-                attention_heads=args.aheads,
-                conv_wshare=args.wshare,
-                conv_kernel_length=args.ldconv_encoder_kernel_length,
-                conv_usebias=args.ldconv_usebias,
-                linear_units=args.eunits,
-                num_blocks=args.text_elayers,
-                input_layer=args.transformer_input_layer,
-                dropout_rate=args.dropout_rate,
-                positional_dropout_rate=args.dropout_rate,
-                attention_dropout_rate=args.transformer_attn_dropout_rate,
-                stochastic_depth_rate=args.stochastic_depth_rate,
-                intermediate_layers=self.intermediate_ctc_layers,
-            )
+            # self.text_encoder = Encoder(
+            #     idim=idim,
+            #     selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
+            #     attention_dim=args.adim,
+            #     attention_heads=args.aheads,
+            #     conv_wshare=args.wshare,
+            #     conv_kernel_length=args.ldconv_encoder_kernel_length,
+            #     conv_usebias=args.ldconv_usebias,
+            #     linear_units=args.eunits,
+            #     num_blocks=args.text_elayers,
+            #     input_layer=args.transformer_input_layer,
+            #     dropout_rate=args.dropout_rate,
+            #     positional_dropout_rate=args.dropout_rate,
+            #     attention_dropout_rate=args.transformer_attn_dropout_rate,
+            #     stochastic_depth_rate=args.stochastic_depth_rate,
+            #     intermediate_layers=self.intermediate_ctc_layers,
+            # )
             
             self.phn_ctc = CTC(
                 args.pdim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True
@@ -251,12 +251,15 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_pad, hs_mask, hs_intermediates, hs_phoneme = self.encoder(xs_pad, src_mask)
         self.hs_pad = hs_pad
         # FOR Phoneme CTC
+        
         ys_phn = None
         if len(ys_pad) == 1:
             ys_pad = ys_pad[0]
         elif len (ys_pad) == 2:
             ys_pad, ys_phn = ys_pad
-        assert (len(ys_pad) > 2)
+        else:
+            logging.warning(f'ys_pad:{ys_pad}')
+            assert (len(ys_pad) > 2)
          
         # 2. forward decoder
         if self.decoder is not None:
@@ -377,7 +380,7 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
-        enc_output, _, _ = self.encoder(x, None)
+        enc_output, _, _, _ = self.encoder(x, None)
         return enc_output.squeeze(0)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -619,6 +622,14 @@ class E2E(ASRInterface, torch.nn.Module):
                 or isinstance(m, DynamicConvolution)
                 or isinstance(m, RelPositionMultiHeadedAttention)
             ):
+                prob = ""
+                if (isinstance(m, MultiHeadedAttention)):
+                    prob = "MultiheadAtt"
+                elif (isinstance(m, DynamicConvolution)):
+                    prob = "DynamicConv"
+                elif (isinstance(m, RelPositionMultiHeadedAttention)):
+                    prob = "RelPositionMultiHeadedAtt"
+                # logging.warning(f'the plot is called by {prob} with name {name}')
                 ret[name] = m.attn.cpu().numpy()
             if isinstance(m, DynamicConvolution2D):
                 ret[name + "_time"] = m.attn_t.cpu().numpy()
