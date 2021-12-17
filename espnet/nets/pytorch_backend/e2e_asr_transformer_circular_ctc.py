@@ -10,6 +10,9 @@ import math
 import numpy
 import torch
 
+import chainer
+from chainer import reporter
+
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.ctc_prefix_score import CTCPrefixScore
 from espnet.nets.e2e_asr_common import end_detect
@@ -44,6 +47,22 @@ from espnet.nets.scorers.ctc import CTCPrefixScorer
 from espnet.utils.fill_missing_args import fill_missing_args
 
 from espnet.nets.pytorch_backend.transformer.circular_encoder import Encoder as Encoder_cir
+
+class Cir_Reporter(chainer.Chain):
+    """A chainer reporter wrapper."""
+
+    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss, phn_loss):
+        """Report at every step."""
+        reporter.report({"loss_ctc": loss_ctc}, self)
+        reporter.report({"loss_att": loss_att}, self)
+        reporter.report({"acc": acc}, self)
+        reporter.report({"cer_ctc": cer_ctc}, self)
+        reporter.report({"cer": cer}, self)
+        reporter.report({"wer": wer}, self)
+        logging.info("mtl loss:" + str(mtl_loss))
+        reporter.report({"loss": mtl_loss}, self)
+        reporter.report({"pinyin_ctc": phn_loss}, self)
+
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -200,7 +219,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.odim = odim
         self.ignore_id = ignore_id
         self.subsample = get_subsample(args, mode="asr", arch="transformer")
-        self.reporter = Reporter()
+        self.reporter = Cir_Reporter()
 
         self.reset_parameters(args)
         self.adim = args.adim  # used for CTC (equal to d_model)
@@ -358,7 +377,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # logging.warning(f'\nctc_loss:{loss_ctc} \nphn_ctc_loss:{loss_phn_ctc} \nloss_data:{loss_data}')
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
             self.reporter.report(
-                loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data
+                loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data, loss_phn_ctc
             )
         else:
             logging.warning("loss (=%f) is not correct", loss_data)

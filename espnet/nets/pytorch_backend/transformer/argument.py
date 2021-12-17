@@ -204,6 +204,13 @@ def add_arguments_transformer_common(group):
         help="",
     )
 
+    group.add_argument(
+        "--text_encoder",
+        default=False,
+        type=bool,
+        help="",
+    )
+
 
     # Decoder
     group.add_argument(
