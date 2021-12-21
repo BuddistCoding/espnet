@@ -12,7 +12,7 @@ from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttenti
 from espnet.nets.pytorch_backend.transformer.dynamic_conv import DynamicConvolution
 from espnet.nets.pytorch_backend.transformer.dynamic_conv2d import DynamicConvolution2D
 from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
-from espnet.nets.pytorch_backend.transformer.encoder_layer import EncoderLayer
+from espnet.nets.pytorch_backend.transformer.encoder_layer import EncoderLayer, CrossAttEncoderLayer
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 from espnet.nets.pytorch_backend.transformer.lightconv import LightweightConvolution
 from espnet.nets.pytorch_backend.transformer.lightconv2d import LightweightConvolution2D
@@ -164,6 +164,7 @@ class Encoder(torch.nn.Module):
             dropout_rate,
             positionwise_conv_kernel_size,
         )
+        self.selfattention_layer_type = selfattention_layer_type
         if selfattention_layer_type in [
             "selfattn",
             "rel_selfattn",
@@ -241,19 +242,44 @@ class Encoder(torch.nn.Module):
             ]
         else:
             raise NotImplementedError(selfattention_layer_type)
-
+        
+        # if selfattention_layer_type == "separate":
+        #     self.encoders = torch.nn.ModuleList(
+        #         CrossAttEncoderLayer(
+        #             attention_dim,
+        #             encoder_selfattn_layer(*encoder_selfattn_layer_args[0]),
+        #             positionwise_layer(*positionwise_layer_args),
+        #             dropout_rate,
+        #             normalize_before,
+        #             concat_after,
+        #             stochastic_depth_rate * float(1) / num_blocks,
+        #             ),
+        #         repeat(
+        #             num_blocks - 1,
+        #             lambda lnum: EncoderLayer(
+        #             attention_dim,
+        #             encoder_selfattn_layer(*encoder_selfattn_layer_args[lnum + 1]),
+        #             positionwise_layer(*positionwise_layer_args),
+        #             dropout_rate,
+        #             normalize_before,
+        #             concat_after,
+        #             stochastic_depth_rate * float(1 + lnum + 1) / num_blocks,
+        #             )
+        #         )
+        #     )
+        # else:
         self.encoders = repeat(
-            num_blocks,
-            lambda lnum: EncoderLayer(
-                attention_dim,
-                encoder_selfattn_layer(*encoder_selfattn_layer_args[lnum]),
-                positionwise_layer(*positionwise_layer_args),
-                dropout_rate,
-                normalize_before,
-                concat_after,
-                stochastic_depth_rate * float(1 + lnum) / num_blocks,
-            ),
-        )
+                num_blocks,
+                lambda lnum: CrossAttEncoderLayer(
+                    attention_dim,
+                    encoder_selfattn_layer(*encoder_selfattn_layer_args[lnum]),
+                    positionwise_layer(*positionwise_layer_args),
+                    dropout_rate,
+                    normalize_before,
+                    concat_after,
+                    stochastic_depth_rate * float(1 + lnum) / num_blocks,
+                ),
+            )
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
 
@@ -294,7 +320,7 @@ class Encoder(torch.nn.Module):
             raise NotImplementedError("Support only linear or conv1d.")
         return positionwise_layer, positionwise_layer_args
 
-    def forward(self, xs, masks):
+    def forward(self, xs , masks , memory = None, memory_mask = None):
         """Encode input sequence.
 
         Args:
@@ -306,55 +332,77 @@ class Encoder(torch.nn.Module):
             torch.Tensor: Mask tensor (#batch, time).
 
         """
-        if isinstance(
-            self.embed,
-            (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
-        ):
-            xs, masks = self.embed(xs, masks)
-        else:
-            xs = self.embed(xs)
 
-        if self.intermediate_layers is None and (self.phoneme_input_layer is None or self.phoneme_output_layer is None):
-            xs, masks = self.encoders(xs, masks)
-            if self.phoneme_input_layer is not None or self.phoneme_output_layer is not None:
-                logging.warning("You shold point out both phoneme input layer and output layer so that can output phoneme CTC")
+        if memory is None and memory_mask is None:
+            phoneme_ctc_output = None
+            if isinstance(
+                self.embed,
+                (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
+            ):
+                xs, masks = self.embed(xs, masks)
+            else:
+                xs = self.embed(xs)
 
-        elif self.intermediate_layers:
-            intermediate_outputs = []
-            for layer_idx, encoder_layer in enumerate(self.encoders):
-                xs, masks = encoder_layer(xs, masks)
+            if self.intermediate_layers is None and (self.phoneme_input_layer is None or self.phoneme_output_layer is None):
+                xs, masks = self.encoders(xs, masks, memory = memory, memory_mask = memory_mask)
+                if self.phoneme_input_layer is not None or self.phoneme_output_layer is not None:
+                    logging.warning("You shold point out both phoneme input layer and output layer so that can output phoneme CTC")
 
-                if (
-                    self.intermediate_layers is not None
-                    and layer_idx + 1 in self.intermediate_layers
-                ):
-                    encoder_output = xs
-                    # intermediate branches also require normalization.
-                    if self.normalize_before:
-                        encoder_output = self.after_norm(encoder_output)
-                    intermediate_outputs.append(encoder_output)
+            elif self.intermediate_layers:
+                intermediate_outputs = []
+                for layer_idx, encoder_layer in enumerate(self.encoders):
+                    xs, masks = encoder_layer(xs, masks, memory = memory, memory_mask = memory_mask)
 
-        elif self.phoneme_output_layer:
-            phoneme_ctc_output = []
-            for layer_idx, encoder_layer in enumerate(self.encoders):
-                xs, masks = encoder_layer(xs, masks)
+                    if (
+                        self.intermediate_layers is not None
+                        and layer_idx + 1 in self.intermediate_layers
+                    ):
+                        encoder_output = xs
+                        # intermediate branches also require normalization.
+                        if self.normalize_before:
+                            encoder_output = self.after_norm(encoder_output)
+                        intermediate_outputs.append(encoder_output)
+            elif self.phoneme_output_layer:
+                for layer_idx, encoder_layer in enumerate(self.encoders):
+                    xs, masks = encoder_layer(xs, masks, memory = memory, memory_mask = memory_mask)
 
-                if (layer_idx+1 in self.phoneme_output_layer):
-                    encoder_output = xs
-                    if self.normalize_before:
-                        encoder_output = self.after_norm(encoder_output)
-                    phoneme_ctc_output.append(encoder_output)
+                    if (layer_idx +1  == self.phoneme_output_layer):
+                        encoder_output = xs
+                        if self.normalize_before:
+                            encoder_output = self.after_norm(encoder_output)
+                        phoneme_ctc_output = encoder_output
 
-        if self.normalize_before:
-            xs = self.after_norm(xs)
+            if self.normalize_before:
+                xs = self.after_norm(xs)
 
-        if self.intermediate_layers:
-            return xs, masks, intermediate_outputs, None
-        
-        if self.phoneme_output_layer:
-            return xs, masks, None , phoneme_ctc_output
+            if self.intermediate_layers:
+                return xs, masks, intermediate_outputs, None
+            
+            if self.phoneme_output_layer:
+                return xs, masks, None , phoneme_ctc_output
 
-        return xs, masks, None, None
+            return xs, masks, None, None
+        else: # from text_encoder
+            assert(
+                self.phoneme_output_layer is None 
+                or self.phoneme_input_layer is None 
+                or self.phoneme_input_layer > self.phoneme_output_layer
+            )
+            for layer_num, encoder_layer in enumerate(self.encoders):
+
+                if layer_num == self.phoneme_input_layer:
+                    xs, masks = encoder_layer(xs, masks, memory, memory_mask)
+                else:   
+                    xs, masks = encoder_layer(xs, masks)
+                    if layer_num == self.phoneme_output_layer:
+                        phoneme_ctc_output = []
+                        encoder_output = xs
+                        if self.normalize_before:
+                            encoder_output = self.after_norm(encoder_output)
+                        phoneme_ctc_output.append(encoder_output)
+                        return xs, masks, None, phoneme_ctc_output
+
+            return xs, masks, None, None
         
 
 
@@ -385,3 +433,4 @@ class Encoder(torch.nn.Module):
         if self.normalize_before:
             xs = self.after_norm(xs)
         return xs, masks, new_cache
+

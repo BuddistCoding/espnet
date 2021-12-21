@@ -178,15 +178,15 @@ def add_arguments_transformer_common(group):
 
     group.add_argument(
         "--phoneme-input-layer",
-        default="",
-        type=str,
+        default=-1,
+        type=int,
         help="",
     )
 
     group.add_argument(
         "--phoneme-output-layer",
-        default="",
-        type=str,
+        default=-1,
+        type=int,
         help="",
     )
 
@@ -205,10 +205,17 @@ def add_arguments_transformer_common(group):
     )
 
     group.add_argument(
-        "--text_encoder",
+        "--add-text-encoder",
         default=False,
         type=bool,
         help="",
+    )
+
+    group.add_argument(
+        "--from-text-encoder",
+        default=False,
+        type=bool,
+        help="Only set to true in e2e_asr_transformer_circular_ctc.py",
     )
 
 

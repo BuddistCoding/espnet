@@ -16,12 +16,16 @@ dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
 resume=        # Resume the training from snapshot
+resume_fine_tuning=
+
+Training=true
 
 # feature configuration
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
 train_config=conf/tuning/train_pytorch_circular_transformer.yaml
+fine_tuning_config=conf/tuning/finetune_pytorch_circular_transformer.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -42,7 +46,7 @@ data=/home/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="" # tag for managing experiments.
+tag="finetuning" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -221,9 +225,31 @@ mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+    if [ ${Training} ]; then
+        echo "Training left side"
+        ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+            asr_train.py \
+            --config ${train_config} \
+            --preprocess-conf ${preprocess_config} \
+            --ngpu ${ngpu} \
+            --backend ${backend} \
+            --outdir ${expdir}/results \
+            --tensorboard-dir tensorboard/${expname} \
+            --debugmode ${debugmode} \
+            --dict ${dict} \
+            --debugdir ${expdir} \
+            --minibatches ${N} \
+            --verbose ${verbose} \
+            --resume ${resume} \
+            --train-json ${feat_tr_dir}/data.json \
+            --valid-json ${feat_dt_dir}/data.json \
+            --phn_dict ${phn_dict}
+    fi
+    
+    echo "Fine-tuning with right side"
+    ${cuda_cmd} --gpu ${ngpu} ${expdir}/fine_tuning_train.log \
         asr_train.py \
-        --config ${train_config} \
+        --config ${fine_tuning_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
         --backend ${backend} \
@@ -234,7 +260,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --debugdir ${expdir} \
         --minibatches ${N} \
         --verbose ${verbose} \
-        --resume ${resume} \
+        --resume ${resume_fine_tuning} \
         --train-json ${feat_tr_dir}/data.json \
         --valid-json ${feat_dt_dir}/data.json \
         --phn_dict ${phn_dict}

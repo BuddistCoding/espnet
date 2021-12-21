@@ -441,7 +441,6 @@ def make_batchset(
 
     batches_list = []  # List[List[List[Tuple[str, dict]]]]
 
-    logging.warning(f'count:{count}')
     for d in category2data.values():
         if batch_sort_key == "shuffle":
             batches = batchfy_shuffle(

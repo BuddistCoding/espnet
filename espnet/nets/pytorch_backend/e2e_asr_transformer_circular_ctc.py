@@ -54,6 +54,7 @@ class Cir_Reporter(chainer.Chain):
     def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss, phn_loss):
         """Report at every step."""
         reporter.report({"loss_ctc": loss_ctc}, self)
+        reporter.report({"pinyin_ctc": phn_loss}, self)
         reporter.report({"loss_att": loss_att}, self)
         reporter.report({"acc": acc}, self)
         reporter.report({"cer_ctc": cer_ctc}, self)
@@ -61,7 +62,7 @@ class Cir_Reporter(chainer.Chain):
         reporter.report({"wer": wer}, self)
         logging.info("mtl loss:" + str(mtl_loss))
         reporter.report({"loss": mtl_loss}, self)
-        reporter.report({"pinyin_ctc": phn_loss}, self)
+        
 
 
 class E2E(ASRInterface, torch.nn.Module):
@@ -105,6 +106,9 @@ class E2E(ASRInterface, torch.nn.Module):
 
         if args.transformer_attn_dropout_rate is None:
             args.transformer_attn_dropout_rate = args.dropout_rate
+        
+        # if (args.phn_ctc_weight > 0 and args.add_text_encoder):
+        #     assert(args.phn_ctc_warmup > args.epochs)
 
         self.intermediate_ctc_weight = args.intermediate_ctc_weight
         self.intermediate_ctc_layers = []
@@ -112,18 +116,11 @@ class E2E(ASRInterface, torch.nn.Module):
             self.intermediate_ctc_layers = [
                 int(i) for i in args.intermediate_ctc_layer.split(",")
             ]
-        
-        self.phoneme_input_layer = []
-        self.phoneme_output_layer = []
-        if args.phoneme_input_layer != "":
-            self.phoneme_input_layer = [
-                int(i) for i in args.phoneme_input_layer.split(",")
-            ]
-
-        if args.phoneme_output_layer != "":
-            self.phoneme_output_layer = [
-                int(i) for i in args.phoneme_output_layer.split(",")
-            ]
+        # phoneme input & output layer
+        self.phoneme_input_layer = args.phoneme_input_layer
+        self.phoneme_output_layer = args.phoneme_output_layer
+        if self.phoneme_input_layer > 0 and self.phoneme_output_layer > 0:
+            assert(self.phoneme_input_layer <= self.phoneme_output_layer)
         
         if args.phn_ctc_weight > 0.0:
             self.encoder = Encoder_cir(
@@ -145,28 +142,34 @@ class E2E(ASRInterface, torch.nn.Module):
                 phoneme_input_layer=self.phoneme_input_layer,
                 phoneme_output_layer=self.phoneme_output_layer,
             )
-
-            # self.text_encoder = Encoder(
-            #     idim=idim,
-            #     selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
-            #     attention_dim=args.adim,
-            #     attention_heads=args.aheads,
-            #     conv_wshare=args.wshare,
-            #     conv_kernel_length=args.ldconv_encoder_kernel_length,
-            #     conv_usebias=args.ldconv_usebias,
-            #     linear_units=args.eunits,
-            #     num_blocks=args.text_elayers,
-            #     input_layer=args.transformer_input_layer,
-            #     dropout_rate=args.dropout_rate,
-            #     positional_dropout_rate=args.dropout_rate,
-            #     attention_dropout_rate=args.transformer_attn_dropout_rate,
-            #     stochastic_depth_rate=args.stochastic_depth_rate,
-            #     intermediate_layers=self.intermediate_ctc_layers,
-            # )
             
             self.phn_ctc = CTC(
                 args.pdim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True
             )
+
+            self.text_encoder = None
+            self.add_text_encoder = args.add_text_encoder
+
+            if args.add_text_encoder:
+                # Load state dict of phn_ctc and 8-layers encoder
+                self.text_encoder = Encoder_cir(
+                    idim=odim, # dimension of charaters
+                    selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
+                    attention_dim=args.adim,
+                    attention_heads=args.aheads,
+                    conv_wshare=args.wshare,
+                    conv_kernel_length=args.ldconv_encoder_kernel_length,
+                    conv_usebias=args.ldconv_usebias,
+                    linear_units=args.eunits,
+                    num_blocks=args.text_elayers,
+                    input_layer=args.transformer_input_layer,
+                    dropout_rate=args.dropout_rate,
+                    positional_dropout_rate=args.dropout_rate,
+                    attention_dropout_rate=args.transformer_attn_dropout_rate,
+                    stochastic_depth_rate=args.stochastic_depth_rate,
+                    intermediate_layers=self.intermediate_ctc_layers,
+                )
+
         else:
             self.encoder = Encoder(
                 idim=idim,
@@ -232,7 +235,6 @@ class E2E(ASRInterface, torch.nn.Module):
             )
         else:
             self.ctc = None
-            
 
         if args.report_cer or args.report_wer:
             self.error_calculator = ErrorCalculator(
@@ -264,13 +266,6 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: accuracy in attention decoder
         :rtype: float
         """
-        # 1. forward encoder
-        xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
-        src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask, hs_intermediates, hs_phoneme = self.encoder(xs_pad, src_mask)
-        self.hs_pad = hs_pad
-        # FOR Phoneme CTC
-        
         ys_phn = None
         if len(ys_pad) == 1:
             ys_pad = ys_pad[0]
@@ -278,7 +273,27 @@ class E2E(ASRInterface, torch.nn.Module):
             ys_pad, ys_phn = ys_pad
         else:
             logging.warning(f'ys_pad:{ys_pad}')
-            assert (len(ys_pad) > 2)
+            assert (len(ys_pad) <= 2)
+        
+        loss_phn_1 = None
+        # 1. forward encoder
+        xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
+        src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
+        hs_pad, hs_mask, hs_intermediates, hs_phn_1 = self.encoder(xs_pad, src_mask)
+        self.hs_pad = hs_pad
+     
+        # FOR Phoneme CTC
+        if self.add_text_encoder:
+            # forward text encoder
+            logging.warning(f'ctc linear shape:{self.ctc.ctc_lo.weight.shape}')
+            text_input = self.ctc.ctc_lo.weight[ys_pad][:]
+            
+            # Make memory mask
+            text_mask = make_non_pad_mask(ilens.tolist()).to(text_input.device).unsqueeze(-2) # To implement
+
+            hs_pad, hs_mask, _, _ = self.text_encoder(text_input, text_mask, memory = hs_pad, memory_mask = hs_mask)
+            hs_pad, hs_mask, hs_intermediate, hs_phn_2 = self.encoder(xs_pad, src_mask, hs_pad, hs_mask)
+            
          
         # 2. forward decoder
         if self.decoder is not None:
@@ -303,6 +318,7 @@ class E2E(ASRInterface, torch.nn.Module):
         cer_ctc = None
         loss_intermediate_ctc = 0.0
         loss_phn_ctc = 0.0
+        loss_phn_ctc_2 = 0.0
         if self.mtlalpha == 0.0:
             loss_ctc = None
         else:
@@ -328,10 +344,14 @@ class E2E(ASRInterface, torch.nn.Module):
 
 
             if self.phn_ctc_weight > 0:
-                for hs_phn in hs_phoneme:
-                    loss_phn = self.phn_ctc(hs_phn.view(batch_size, -1, self.adim), hs_len, ys_phn)
+                for hs_phn in hs_phn_1:
+                    loss_phn = self.phn_ctc(hs_phn_1.view(batch_size, -1, self.adim), hs_len, ys_phn)
                     loss_phn_ctc += loss_phn
-                loss_phn_ctc /= len(hs_phoneme)
+                loss_phn_ctc /= len(hs_phn_1)
+
+                if (self.add_text_encoder and self.phoneme_input_layer and self.phoneme_output_layer):
+                    # xs_pad,  hs_mask, _, hs_phn = self.encoder(xs_pad, src_mask, h = hs_pad)
+                    loss_phn_ctc_2 = self.phn_ctc(hs_phn_2.view(batch_size, -1, self.adim), hs_len, ys_phn)
 
         # 5. compute cer/wer
         if self.training or self.error_calculator is None or self.decoder is None:
@@ -371,7 +391,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 self.loss = (
                    (1 - alpha) * loss_att
                     + alpha * loss_ctc
-                    + self.phn_ctc_weight * loss_phn_ctc
+                    + self.phn_ctc_weight * (loss_phn_ctc + loss_phn_ctc_2)
                 )
             loss_att_data = float(loss_att)
             loss_ctc_data = float(loss_ctc)
