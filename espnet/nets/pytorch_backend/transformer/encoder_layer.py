@@ -180,15 +180,15 @@ class CrossAttEncoderLayer(nn.Module):
             torch.Tensor: Mask tensor (#batch, time).
 
         """
-        if memory is None and memory_mask is None:
-            skip_layer = False
+        skip_layer = False
             # with stochastic depth, residual connection `x + f(x)` becomes
             # `x <- x + 1 / (1 - p) * f(x)` at training time.
-            stoch_layer_coeff = 1.0
-            if self.training and self.stochastic_depth_rate > 0:
-                skip_layer = torch.rand(1).item() < self.stochastic_depth_rate
-                stoch_layer_coeff = 1.0 / (1 - self.stochastic_depth_rate)
-
+        stoch_layer_coeff = 1.0
+        if self.training and self.stochastic_depth_rate > 0:
+            skip_layer = torch.rand(1).item() < self.stochastic_depth_rate
+            stoch_layer_coeff = 1.0 / (1 - self.stochastic_depth_rate)
+        
+        if memory is None and memory_mask is None:
             if skip_layer:
                 if cache is not None:
                     x = torch.cat([cache, x], dim=1)
@@ -229,6 +229,11 @@ class CrossAttEncoderLayer(nn.Module):
             return x, x_mask
 
         elif memory is not None and memory_mask is not None:
+            if skip_layer:
+                if cache is not None:
+                    x = torch.cat([cache, x], dim=1)
+                return x, x_mask
+
             residual = x
             if self.normalize_before:
                 x = self.norm1(x)
@@ -242,7 +247,7 @@ class CrossAttEncoderLayer(nn.Module):
                     x.shape[0],
                     x.shape[1] - 1,
                     self.size,
-                ), f"{cache.shape} == {(x.shape[0], x.shape[1] - 1, self.size)}"
+                )
 
                 x_q = x[:, -1:, :]
                 residual = residual[:, -1:, :]
@@ -252,31 +257,26 @@ class CrossAttEncoderLayer(nn.Module):
 
             if self.concat_after:
                 tgt_concat = torch.cat(
-                    (x_q, self.self_attn(x_q, x, x, x_q_mask)), dim=-1
+                    (x_q, self.self_attn(x_q, memory, memory, memory_mask)), dim=-1
                 )
                 x = residual + self.concat_linear(tgt_concat)
             else:
-                x = residual + self.dropout(self.self_attn(x_q, x, x, x_q_mask))
+                x = residual + stoch_layer_coeff * self.dropout(self.self_attn(x_q, memory, memory, memory_mask))
+
             if not self.normalize_before:
                 x = self.norm1(x)
 
             residual = x
             if self.normalize_before:
                 x = self.norm2(x)
-            x = residual + self.dropout(self.src_attn(x, memory, memory, memory_mask))
+            x = residual + stoch_layer_coeff * self.dropout(self.feed_forward(x))
             if not self.normalize_before:
                 x = self.norm2(x)
-
-            # residual = x
-            # if self.normalize_before:
-            #     x = self.norm3(x)
-            # x = residual + self.dropout(self.feed_forward(x))
-            # if not self.normalize_before:
-            #     x = self.norm3(x)
 
             if cache is not None:
                 x = torch.cat([cache, x], dim=1)
 
             return x, x_mask, memory, memory_mask
         else:
-            assert(memory is None or memory_mask is not None)
+            assert(memory is not None and memory_mask is not None)
+            assert(memory is None and memory_mask is None)

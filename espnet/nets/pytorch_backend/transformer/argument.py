@@ -218,6 +218,20 @@ def add_arguments_transformer_common(group):
         help="Only set to true in e2e_asr_transformer_circular_ctc.py",
     )
 
+    group.add_argument(
+        "--use-hyp",
+        default="hid",
+        type=str,
+        help="",
+    )
+
+    group.add_argument(
+        "--train-mode",
+        default="asr",
+        type=str,
+        help="asr for input wav feature, text for training text embedding",
+    )
+
 
     # Decoder
     group.add_argument(

@@ -9,6 +9,7 @@
 import math
 
 import torch
+import logging
 
 
 def _pre_hook(
@@ -60,6 +61,7 @@ class PositionalEncoding(torch.nn.Module):
         """Reset the positional encodings."""
         if self.pe is not None:
             if self.pe.size(1) >= x.size(1):
+
                 if self.pe.dtype != x.dtype or self.pe.device != x.device:
                     self.pe = self.pe.to(dtype=x.dtype, device=x.device)
                 return

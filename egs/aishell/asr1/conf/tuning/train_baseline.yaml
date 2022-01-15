@@ -1,6 +1,6 @@
 # network architecture
 # encoder related
-elayers: 12
+elayers: 8
 eunits: 2048
 # decoder related
 dlayers: 0
@@ -27,7 +27,7 @@ opt: noam
 accum-grad: 2
 grad-clip: 5
 patience: 0
-epochs: 75
+epochs: 50
 dropout-rate: 0.1
 
 # transformer specific setting
@@ -41,13 +41,13 @@ transformer-length-normalized-loss: false
 transformer-init: pytorch
 
 # circular transformer related
-phn-ctc-weight: 0.5
-phoneme-input-layer: 4
-phoneme-output-layer: 4
+phn-ctc-weight: 0.0
+# phoneme-input-layer: -1
+# phoneme-output-layer: -1
 
 # text encoder related
 text-elayers: 0
-# add-text-encoder: true
+# add-text-encoder: false
 
 # Report CER & WER
 report-cer: true

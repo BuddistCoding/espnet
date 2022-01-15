@@ -60,6 +60,7 @@ def batchfy_by_seq(
         # if ilen = 1000 and max_length_in = 800
         # then b = batchsize / 2
         # and max(min_batches, .) avoids batchsize = 0
+
         bs = max(min_batch_size, int(batch_size / (1 + factor)))
         end = min(len(sorted_data), start + bs)
         minibatch = sorted_data[start:end]
@@ -500,7 +501,7 @@ def make_batchset(
     # for debugging
     if num_batches > 0:
         batches = batches[:num_batches]
-    logging.info("# minibatches: " + str(len(batches)))
+    logging.warning("# minibatches: " + str(len(batches)) + "# utts:" + str(len(sorted_data)))
 
     # batch: List[List[Tuple[str, dict]]]
     return batches

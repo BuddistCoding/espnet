@@ -16,7 +16,7 @@ dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
 resume=        # Resume the training from snapshot
-resume_fine_tuning=
+
 
 Training=false
 
@@ -25,7 +25,7 @@ do_delta=false
 
 preprocess_config=conf/specaug.yaml
 train_config=conf/tuning/train_pytorch_circular_transformer.yaml
-fine_tuning_config=conf/tuning/finetune_pytorch_circular_transformer.yaml
+pretrain_config=conf/tuning/pretrain_circular_transformer.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -46,8 +46,7 @@ data=/home/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-# tag="2022_1_13_Pretrain_CTC" # tag for managing experiments.?
-tag="2022_1_14_12Layers_pinyin_CTC" # tag for managing experiments.
+tag="2022_1_7_Pretrain_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -245,13 +244,12 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
     if ${Training}; then
         echo "PreTraining "
-        ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+        ${cuda_cmd} --gpu ${ngpu} ${expdir}/Pretrain.log \
             asr_train.py \
-            --config ${Pretrain_config} \
-            # --preprocess-conf ${preprocess_config} \
+            --config ${pretrain_config} \
             --ngpu ${ngpu} \
             --backend ${backend} \
-            --outdir ${expdir}/results \
+            --outdir ${expdir}/Pretrain_results \
             --tensorboard-dir tensorboard/${expname} \
             --debugmode ${debugmode} \
             --dict ${dict} \
@@ -262,10 +260,11 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --train-json ${feat_tr_dir}/aishell2/text_data.json \
             --valid-json ${feat_dt_dir}/aishell2/text_data.json \
             --phn_dict ${phn_dict}
+            # --preprocess-conf ${preprocess_config} \
     fi
-        
     echo "Training ASR side"
-
+    resume=${expdir}/Pretrain_results/snapshot.ep.25
+    echo ${resume}
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
             asr_train.py \
             --config ${train_config} \
@@ -313,7 +312,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots ${expdir}/results/snapshot.ep.{4*,50} \
+        		       --snapshots ${expdir}/results/snapshot.ep.* \
         		       --out ${expdir}/results/${recog_model} \
         		       --num ${n_average}
     fi

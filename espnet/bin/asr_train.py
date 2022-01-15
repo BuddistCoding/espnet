@@ -70,7 +70,7 @@ def get_parser(parser=None, required=True):
     )
     parser.add_argument("--debugmode", default=1, type=int, help="Debugmode")
     parser.add_argument("--dict", required=required, help="Dictionary")
-    parser.add_argument("--phn_dict", required=required, help="Phoneme Dictionary")
+    parser.add_argument("--phn_dict", required=False, help="Phoneme Dictionary")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--debugdir", type=str, help="Output directory for debugging")
     parser.add_argument(
@@ -595,7 +595,7 @@ def main(cmd_args):
     logging.info("python path = " + os.environ.get("PYTHONPATH", "(None)"))
 
     # set random seed
-    logging.info("random seed = %d" % args.seed)
+    logging.warning("random seed = %d" % args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
 

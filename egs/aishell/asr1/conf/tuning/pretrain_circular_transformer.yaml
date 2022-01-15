@@ -1,6 +1,6 @@
 # network architecture
 # encoder related
-elayers: 12
+elayers: 8
 eunits: 2048
 # decoder related
 dlayers: 0
@@ -17,7 +17,7 @@ mtlalpha: 1.0
 lsm-weight: 0.1
 
 # minibatch related
-batch-size: 64
+batch-size: 1024
 maxlen-in: 512  # if input length  > maxlen-in, batchsize is automatically reduced
 maxlen-out: 150 # if output length > maxlen-out, batchsize is automatically reduced
 
@@ -27,7 +27,7 @@ opt: noam
 accum-grad: 2
 grad-clip: 5
 patience: 0
-epochs: 75
+epochs: 25
 dropout-rate: 0.1
 
 # transformer specific setting
@@ -44,10 +44,11 @@ transformer-init: pytorch
 phn-ctc-weight: 0.5
 phoneme-input-layer: 4
 phoneme-output-layer: 4
+train-mode: "text"
 
 # text encoder related
-text-elayers: 0
-# add-text-encoder: true
+text-elayers: 4
+# add-text-encoder: false
 
 # Report CER & WER
 report-cer: true

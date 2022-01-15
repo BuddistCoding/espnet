@@ -207,6 +207,7 @@ class CustomUpdater(StandardUpdater):
             with amp.scale_loss(loss, opt) as scaled_loss:
                 scaled_loss.backward()
         else:
+            # logging.warning(f"loss:{loss}")
             loss.backward()
         # gradient noise injection
         if self.grad_noise:
@@ -230,6 +231,7 @@ class CustomUpdater(StandardUpdater):
         else:
             optimizer.step()
         optimizer.zero_grad()
+        # logging.warning(f'update')
 
     def update(self):
         self.update_core()
@@ -270,6 +272,7 @@ class CustomConverter(object):
         xs = None
         ys = None
         ys_phn = None
+
         if (len(batch[0]) == 2):
             xs, ys = batch[0]
         elif (len(batch[0]) == 3):
@@ -281,6 +284,7 @@ class CustomConverter(object):
 
         # get batch of lengths of input sequences
         ilens = np.array([x.shape[0] for x in xs])
+        olens = np.array([y.shape[0] for y in ys])
 
         # perform padding and convert to tensor
         # currently only support real number
@@ -302,6 +306,8 @@ class CustomConverter(object):
             )
 
         ilens = torch.from_numpy(ilens).to(device)
+        olens = torch.from_numpy(olens).to(device)
+
         # NOTE: this is for multi-output (e.g., speech translation)
         ys_pad = pad_list(
             [
@@ -315,7 +321,7 @@ class CustomConverter(object):
         
         
         if (ys_phn is None) :
-            return xs_pad, ilens, [ys_pad]
+            return xs_pad, [ilens, olens], [ys_pad]
         else:
             ys_phn_pad = pad_list(
             [
@@ -324,7 +330,7 @@ class CustomConverter(object):
                 ).long() for y in ys_phn
             ],self.ignore_id).to(device)
 
-            return xs_pad, ilens, [ys_pad, ys_phn_pad]
+            return xs_pad, [ilens, olens], [ys_pad, ys_phn_pad]
 
 
 class CustomConverterMulEnc(object):
@@ -490,7 +496,6 @@ def train(args):
         logging.info("ARGS: " + key + ": " + str(vars(args)[key]))
 
     reporter = model.reporter
-
     # check the use of multi-gpu
     if args.ngpu > 1:
         if args.batch_size != 0:
