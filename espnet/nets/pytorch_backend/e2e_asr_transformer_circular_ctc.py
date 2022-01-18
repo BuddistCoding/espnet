@@ -538,17 +538,18 @@ class E2E(ASRInterface, torch.nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
 
-        x, _ = self.encoder.embed(x, None)
-        for i in range(self.elayers):
-            # logging.warning(f'Decoding : forward {i + 1} layer.')
-            x, _ = self.encoder.encoders[i](x, None)
-        # elif (mode == 'text'):
-        #     x, _ = self.encoder.text_embed(x, None)
-        #     for i in range(self.text_elayers):
-        #         x, self.encoder.encoders[self.elayers + i](x, None)
-        #     for i in range(self.phoneme_input_layer - 1, self.elayers):
-        #         # logging.warning(f'layer:{i}')
-        #         hs_pad, hs_mask = self.encoder.encoders[i](hs_pad, hs_mask)   
+        if (self.mode == 'asr'):
+            x, _ = self.encoder.embed(x, None)
+            for i in range(self.elayers):
+                # logging.warning(f'Decoding : forward {i + 1} layer.')
+                x, _ = self.encoder.encoders[i](x, None)
+        elif (self.mode == 'text'):
+            x, _ = self.encoder.text_embed(x, None)
+            for i in range(self.text_elayers):
+                x, self.encoder.encoders[self.elayers + i](x, None)
+            for i in range(self.phoneme_input_layer - 1, self.elayers):
+                # logging.warning(f'layer:{i}')
+                hs_pad, hs_mask = self.encoder.encoders[i](hs_pad, hs_mask)   
         
         return x.squeeze(0)
 
@@ -562,6 +563,11 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
+        if (self.mode == 'asr'):
+            x = x[0]
+        elif (self.mode == 'text'):
+            x = x[1]
+
         enc_output = self.encode(x).unsqueeze(0)
         if self.mtlalpha == 1.0:
             recog_args.ctc_weight = 1.0

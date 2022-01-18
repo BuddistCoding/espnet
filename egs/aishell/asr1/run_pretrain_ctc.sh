@@ -18,7 +18,8 @@ verbose=0      # verbose option
 resume=        # Resume the training from snapshot
 
 
-Training=false
+training=false
+decode_text=false
 
 # feature configuration
 do_delta=false
@@ -303,16 +304,21 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     #     --phn_dict ${phn_dict}
 fi
 
+
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
+    snapshot=${expdir}/results/snapshot.ep.*
+    if ${decode_text}; then
+        snapshot=${expdir}/Pretrain_results/snapshot.ep.*
+    fi
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots ${expdir}/results/snapshot.ep.* \
+        		       --snapshots  ${snapshot} \ # ${expdir}/results/snapshot.ep.* \
         		       --out ${expdir}/results/${recog_model} \
         		       --num ${n_average}
     fi
@@ -325,14 +331,21 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         recog_v2_opts=""
     fi
 
+    
     pids=() # initialize pids
     for rtask in ${recog_set}; do
     (
         decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_${lmtag}_${ngramtag}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+        jsondata=${feat_recog_dir}/data.json
+
+        if ${decode_text}; then
+            feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}/aishell2
+            jsondata=${feat_recog_dir}/text_data.json
+        fi
 
         # split data
-        splitjson.py --parts ${nj} ${feat_recog_dir}/data.json
+        splitjson.py --parts ${nj} ${jsondata}
 
         #### use CPU for decoding
         ngpu=0
