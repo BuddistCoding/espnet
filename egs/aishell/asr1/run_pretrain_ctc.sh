@@ -47,7 +47,7 @@ data=/home/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="2022_1_7_Pretrain_CTC" # tag for managing experiments.
+tag="2022_2_4_Pretrain_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -164,7 +164,9 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "make json files"
     data2json.sh --feat ${feat_tr_dir}/feats.scp \
 		 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
+
     
+    echo "make aishell2 json files"
     data2json.sh --feat data/${train_set}/aishell2/feats.scp \
 		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
         
@@ -243,7 +245,7 @@ echo ${expname}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    if ${Training}; then
+    if ${training}; then
         echo "PreTraining "
         ${cuda_cmd} --gpu ${ngpu} ${expdir}/Pretrain.log \
             asr_train.py \

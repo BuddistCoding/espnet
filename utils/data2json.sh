@@ -140,7 +140,6 @@ if [ $# == 3 ]; then
 fi
 
 
-
 # 3. Create scp files for the others
 mkdir -p ${tmpdir}/other
 if [ ${multilingual} == true ]; then

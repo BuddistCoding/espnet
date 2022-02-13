@@ -103,7 +103,6 @@ def main():
                     i = m.end()
                 else:
                     break
-
         if args.trans_type == "phn":
             a = a.split(" ")
         elif args.trans_type == "zhphn":

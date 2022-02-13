@@ -232,6 +232,13 @@ def add_arguments_transformer_common(group):
         help="asr for input wav feature, text for training text embedding",
     )
 
+    group.add_argument(
+        "--ce-weight",
+        default=0.0,
+        type=float,
+        help="Cross Entropy Loss",
+    )
+
 
     # Decoder
     group.add_argument(

@@ -24,8 +24,8 @@ Training=false
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_circular_transformer.yaml
-fine_tuning_config=conf/tuning/finetune_pytorch_circular_transformer.yaml
+pretrain_config=conf/tuning/pretrain_pytorch_circular_transformer.yaml
+fine_tuning_config=conf/tuning/train_pytorch_circular_transformer.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -47,7 +47,7 @@ data_url=www.openslr.org/resources/33
 
 # exp tag
 # tag="2022_1_13_Pretrain_CTC" # tag for managing experiments.?
-tag="2022_1_14_12Layers_pinyin_CTC" # tag for managing experiments.
+tag="2022_2_9_12Layers_pinyin_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -268,7 +268,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
 
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
             asr_train.py \
-            --config ${train_config} \
+            --config ${fine_tuning_config} \
             --preprocess-conf ${preprocess_config} \
             --ngpu ${ngpu} \
             --backend ${backend} \
