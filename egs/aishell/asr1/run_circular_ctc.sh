@@ -47,7 +47,7 @@ data_url=www.openslr.org/resources/33
 
 # exp tag
 # tag="2022_1_13_Pretrain_CTC" # tag for managing experiments.?
-tag="2022_2_9_12Layers_pinyin_CTC" # tag for managing experiments.
+tag="2022_2_16_12Layers_pinyin_g2p" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -142,6 +142,7 @@ phn_dict=data/lang_1char/${train_set}_phn_units.txt
 aishell2_dict=data/lang_1char/aishell2_${train_set}_units.txt
 aishell2_phn_dict=data/lang_1char/aishell2_${train_set}_phn_units.txt
 echo "dictionary: ${dict}"
+echo "pinyin_dictionary: ${phn_dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     echo "stage 2: Dictionary and Json Data Preparation"
@@ -157,7 +158,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "make phoneme dictionary"
     echo "<unk> 1" > ${phn_dict}
     # change the dict to aishell2 corpus
-    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text | cut -f 2- -d" " | tr " " "\n" \
+    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text_g2p | cut -f 2- -d" " | tr " " "\n" \
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${phn_dict}
     wc -l ${phn_dict}
 
@@ -307,13 +308,13 @@ fi
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
-    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
-           [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
-           [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
-           [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
+    if [[ $(get_yaml.py ${fine_tuning_config} model-module) = *transformer* ]] || \
+           [[ $(get_yaml.py ${fine_tuning_config} model-module) = *conformer* ]] || \
+           [[ $(get_yaml.py ${fine_tuning_config} etype) = custom ]] || \
+           [[ $(get_yaml.py ${fine_tuning_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots ${expdir}/results/snapshot.ep.{4*,50} \
+        		       --snapshots ${expdir}/results/snapshot.ep.* \
         		       --out ${expdir}/results/${recog_model} \
         		       --num ${n_average}
     fi

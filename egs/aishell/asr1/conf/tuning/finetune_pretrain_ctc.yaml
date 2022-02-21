@@ -43,11 +43,12 @@ transformer-init: pytorch
 # circular transformer related
 phn-ctc-weight: 0.5
 phoneme-input-layer: 4
-phoneme-output-layer: 6
+phoneme-output-layer: 4
 
 # text encoder related
 text-elayers: 4
 add-text-encoder: true
+# forward-again: false
 
 # Report CER & WER
 report-cer: true

@@ -10,7 +10,9 @@ import re
 import sys
 
 from pypinyin import pinyin, lazy_pinyin, Style
+from g2pc import G2pC
 
+import logging
 is_python2 = sys.version_info[0] == 2
 
 
@@ -128,6 +130,8 @@ def main():
             a_flat.append("".join(z))
 
         a_chars = [z.replace(" ", args.space) for z in a_flat]
+        # if args.trans_type == "zhphn":
+        #     logging.warning(a_chars)
         if args.trans_type == "phn":
             a_chars = [z.replace("sil", args.space) for z in a_chars]
         print(" ".join(a_chars))

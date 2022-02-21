@@ -25,8 +25,8 @@ decode_text=false
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_circular_transformer.yaml
-pretrain_config=conf/tuning/pretrain_circular_transformer.yaml
+train_config=conf/tuning/finetune_pretrain_ctc.yaml
+pretrain_config=conf/tuning/pretrain_pretrain_ctc.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -47,7 +47,7 @@ data=/home/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="2022_2_4_Pretrain_CTC" # tag for managing experiments.
+tag="2022_2_18_Pretrain_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -157,24 +157,25 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "make phoneme dictionary"
     echo "<unk> 1" > ${phn_dict}
     # change the dict to aishell2 corpus
-    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text | cut -f 2- -d" " | tr " " "\n" \
+    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text_g2p | cut -f 2- -d" " | tr " " "\n" \
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${phn_dict}
     wc -l ${phn_dict}
 
     echo "make json files"
     data2json.sh --feat ${feat_tr_dir}/feats.scp \
 		 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
+    
+    for rtask in ${recog_set}; do
+        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+        data2json.sh --feat ${feat_recog_dir}/feats.scp \
+		     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
+    done
 
     
     echo "make aishell2 json files"
     data2json.sh --feat data/${train_set}/aishell2/feats.scp \
 		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
         
-    for rtask in ${recog_set}; do
-        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        data2json.sh --feat ${feat_recog_dir}/feats.scp \
-		     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
-    done
 
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
@@ -311,16 +312,16 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
     snapshot=${expdir}/results/snapshot.ep.*
-    if ${decode_text}; then
-        snapshot=${expdir}/Pretrain_results/snapshot.ep.*
-    fi
+    # if ${decode_text}; then
+    #     snapshot=${expdir}/Pretrain_results/snapshot.ep.*
+    # fi
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots  ${snapshot} \ # ${expdir}/results/snapshot.ep.* \
+        		       --snapshots  ${snapshot} \
         		       --out ${expdir}/results/${recog_model} \
         		       --num ${n_average}
     fi

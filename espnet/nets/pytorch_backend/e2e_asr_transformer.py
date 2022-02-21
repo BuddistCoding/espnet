@@ -184,6 +184,24 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: accuracy in attention decoder
         :rtype: float
         """
+        ys_phn = None
+        if len(ys_pad) == 1:
+            ys_pad = ys_pad[0]
+        elif len (ys_pad) == 2:
+            ys_pad, ys_phn = ys_pad
+        else:
+            logging.warning(f'ys_pad:{ys_pad}')
+            assert (len(ys_pad) <= 2)
+        
+        olens = None
+        if len(ilens) == 1:
+            ilens = ilens[0]
+        elif len(ilens) == 2:
+            ilens, olens = ilens
+        else:
+            logging.warning(f'ilens:{ilens}')
+            assert (len(ilens) <= 2)
+
         # 1. forward encoder
         xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
         src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
@@ -217,7 +235,7 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            ys_pad = ys_pad[0]
+            # ys_pad = ys_pad[0]
             loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
             if not self.training and self.error_calculator is not None:
                 ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data

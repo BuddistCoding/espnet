@@ -66,7 +66,7 @@ if [ -z ${text} ]; then
 fi
 
 if [ -z ${phn_text} ]; then
-    phn_text=${dir}/phn_text
+    phn_text=${dir}/phn_text_g2p
 fi
 
 # 1. Create scp files for inputs
@@ -135,10 +135,12 @@ if [ $# == 3 ]; then
     phosize=$(tail -n 1 ${phn_dic} | awk '{print $2}')
     pdim=$(echo "$phosize + 2" | bc)
     < ${tmpdir}/output/phonemeid.scp awk -v pdim=${pdim} '{print $1 " " NF-1 "," pdim}' > ${tmpdir}/output/pho_shape.scp
-
     cat ${phn_text} > ${tmpdir}/output/phoneme.scp
 fi
 
+cat ${tmpdir}/output/phoneme.scp > ${dir}/temp/phoneme.scp
+cat ${tmpdir}/output/phonemeid.scp > ${dir}/temp/phonemeid.scp
+cat ${tmpdir}/output/pho_shape.scp > ${dir}/temp/pho_shape.scp
 
 # 3. Create scp files for the others
 mkdir -p ${tmpdir}/other

@@ -239,6 +239,12 @@ def add_arguments_transformer_common(group):
         help="Cross Entropy Loss",
     )
 
+    group.add_argument(
+        "--forward-again",
+        default=False,
+        type=bool,
+        help="Only used in add_text_encoder=True",
+    )
 
     # Decoder
     group.add_argument(

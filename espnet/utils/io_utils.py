@@ -122,6 +122,7 @@ class LoadInputsAndTargets(object):
                         filepath=inp["feat"], filetype=inp.get("filetype", "mat")
                     )
                     x_feats_dict.setdefault(inp["name"], []).append(x)
+    
             # FIXME(kamo): Dirty way to load only speaker_embedding
             elif self.mode == "tts" and self.use_speaker_embedding:
                 for idx, inp in enumerate(info["input"]):
@@ -220,6 +221,7 @@ class LoadInputsAndTargets(object):
         :rtype: Tuple[OrderedDict, List[str]]
         """
         # handle single-input and multi-input (parallel) asr mode
+        
         xs = list(x_feats_dict.values())
 
         if self.load_output:
@@ -239,7 +241,7 @@ class LoadInputsAndTargets(object):
             nonzero_sorted_idx = sorted(nonzero_idx, key=lambda i: -len(xs[0][i]))
         else:
             nonzero_sorted_idx = nonzero_idx
-
+        
         if len(nonzero_sorted_idx) != len(xs[0]):
             logging.warning(
                 "Target sequences include empty tokenid (batch {} -> {}).".format(
@@ -265,6 +267,7 @@ class LoadInputsAndTargets(object):
             )
         else:
             return_batch = OrderedDict([(x_name, x) for x_name, x in zip(x_names, xs)])
+        
         return return_batch, uttid_list
 
     def _create_batch_mt(self, x_feats_dict, y_feats_dict, uttid_list):

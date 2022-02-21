@@ -1115,7 +1115,7 @@ def recog(args):
 
     load_inputs_and_targets = LoadInputsAndTargets(
         mode="asr",
-        load_output=True, #=False,
+        load_output=False,
         sort_in_input_length=False,
         preprocess_conf=train_args.preprocess_conf
         if args.preprocess_conf is None
@@ -1156,6 +1156,7 @@ def recog(args):
                 logging.info("(%d/%d) decoding " + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
                 feat = load_inputs_and_targets(batch)
+                # logging.warning(f'feat:{feat[0][0]}')
                 feat = (
                     feat[0][0]
                     if args.num_encs == 1
