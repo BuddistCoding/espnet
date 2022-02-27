@@ -24,7 +24,7 @@ Training=false
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-pretrain_config=conf/tuning/pretrain_pytorch_circular_transformer.yaml
+Pretrain_config=conf/tuning/pretrain_pytorch_circular_transformer.yaml
 fine_tuning_config=conf/tuning/train_pytorch_circular_transformer.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -42,7 +42,7 @@ recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.bes
 n_average=10
 
 # data
-data=/home/jason90255/ASR_Corpus
+data=/mnt/nas1/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
@@ -166,14 +166,17 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     data2json.sh --feat ${feat_tr_dir}/feats.scp \
 		 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
     
-    data2json.sh --feat data/${train_set}/aishell2/feats.scp \
-		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
+    
         
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \
 		     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
     done
+    
+    echo "make aishell2 json files"
+    data2json.sh --feat data/${train_set}/aishell2/feats.scp \
+		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
 
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}

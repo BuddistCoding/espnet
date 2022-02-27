@@ -6,6 +6,7 @@
 from argparse import Namespace
 import logging
 import math
+from urllib.parse import non_hierarchical
 
 import numpy
 import torch
@@ -56,7 +57,21 @@ import time
 class Cir_Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
 
-    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss, phn_loss, phn_loss_2, loss_ce, loss_mse):
+    def report(
+        self, 
+        loss_ctc, 
+        loss_att, 
+        acc, 
+        cer_ctc, 
+        cer, 
+        wer, 
+        mtl_loss,
+        phn_loss,
+        phn_loss_2,
+        cer_phn_ctc,
+        loss_ce, 
+        loss_mse
+        ):
         """Report at every step."""
         reporter.report({"loss_ctc": loss_ctc}, self)
         reporter.report({"pinyin_ctc": phn_loss}, self)
@@ -68,6 +83,7 @@ class Cir_Reporter(chainer.Chain):
         reporter.report({"wer": wer}, self)
         logging.info("mtl loss:" + str(mtl_loss))
         reporter.report({"loss": mtl_loss}, self)
+        reporter.report({"pinyin ctc cer": cer_phn_ctc}, self)
         reporter.report({"Cross Entropy loss": loss_ce}, self)
         reporter.report({"MSE loss between 8th & 12th": loss_mse }, self)
 
@@ -87,6 +103,15 @@ class E2E(ASRInterface, torch.nn.Module):
         group = parser.add_argument_group("transformer model setting")
 
         group = add_arguments_transformer_common(group)
+
+        E2E.add_pretrain_arguments(parser)
+
+        return parser
+
+    @staticmethod
+    def add_pretrain_arguments(parser):
+        """Add Arguments for pretrain CTC"""
+        group = parser.add_argument_group("Pretrain-CTC settings")
 
         return parser
 
@@ -252,7 +277,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 args.report_wer,
             )
             self.phn_error_calculator = ErrorCalculator(
-                args.phn_list,
+                args.pho_list,
                 args.sym_space,
                 args.sym_blank,
                 args.report_cer,
@@ -265,6 +290,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.use_hyp = args.use_hyp if (args.use_hyp == "hyp" or args.use_hyp == "tru") else "hid"
 
         
+        # output logging info
         logging.warning(f'add_text_encoder:{self.add_text_encoder}')
         logging.warning(f'use_hyp:{self.use_hyp}')
         logging.warning(f'mode:{self.mode}')
@@ -275,6 +301,7 @@ class E2E(ASRInterface, torch.nn.Module):
         logging.warning(f'Cross Entropy weight:{self.ce_weight}')
         logging.warning(f'encoders: \n{self.encoder}')
 
+        # freezing model layers
         if (self.mode == 'asr' and self.text_elayers > 0):
             for i , layer in enumerate(self.encoder.encoders[self.elayers: self.elayers + self.text_elayers]):
                 logging.warning(f'freeze layer {self.elayers + i + 1}')
@@ -329,8 +356,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. forward encoder
         xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
         src_mask = make_non_pad_mask(ilens).to(xs_pad.device).unsqueeze(-2)
-        # logging.warning(f'First input 8-layer encoder')
-        if (self.mode == 'asr'):
+        if (self.mode == 'asr'): # ASR mode
             hs_pad, hs_mask = self.encoder.embed(xs_pad, src_mask)
         else: # Text mode
             xs_pad[xs_pad == -1] = 0
@@ -340,8 +366,6 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_phn_1 = None
         hs_phn_2 = None
         hs_intermediates = []
-        
-        # logging.warning(f'hs_pad after embed:{hs_pad.shape}')
 
         if (self.mode == 'asr'):
             for i, layer in enumerate(self.encoder.encoders[:self.elayers]):
@@ -350,7 +374,8 @@ class E2E(ASRInterface, torch.nn.Module):
                     if (self.encoder.normalize_before):
                         hs_phn_1 = self.encoder.after_norm(hs_pad)
                     else:
-                        hs_phn_1 = hs_pad.clone()
+                        hs_phn_1 = hs_pad
+        # text mode
         else :
             for i, layer in enumerate(self.encoder.encoders[self.elayers:]):
                 hs_pad, hs_mask = layer(hs_pad, hs_mask)
@@ -361,8 +386,9 @@ class E2E(ASRInterface, torch.nn.Module):
                     if (self.encoder.normalize_before):
                         hs_phn_1 = self.encoder.after_norm(hs_pad)
                     else:
-                        hs_phn_1 = hs_pad.clone()
-
+                        hs_phn_1 = hs_pad
+        
+        # hs_pad_2 for forward text encoder
         hs_pad_2 = None
         if (self.add_text_encoder):
             hs_pad_2 = hs_pad.clone()
@@ -370,32 +396,14 @@ class E2E(ASRInterface, torch.nn.Module):
         if (self.encoder.normalize_before):
             hs_pad = self.encoder.after_norm(hs_pad)
         
-        self.hs_pad = hs_pad.clone()
+        self.hs_pad = hs_pad
 
         if (self.mode == 'asr'):
             # FOR Phoneme CTC
             if (self.add_text_encoder):
-                ys_text = ys_pad.clone()
                 if (self.use_hyp == "hid"):
                     for i in range (self.elayers, self.elayers + self.text_elayers):
                         hs_pad_2, hs_mask= self.encoder.encoders[i](hs_pad_2, hs_mask)
-                    
-                    # elif (self.use_hyp == "tru"):
-                    #     hs_pad_2 = self.ctc.ctc_lo.weight[ys_text][:]
-
-                    #     y_len = []
-                    #     for y in ys_text:
-                    #         y_len.append(torch.count_nonzero(y != -1))
-
-                    #     hs_mask = make_non_pad_mask(y_len).to(hs_pad_2.device).unsqueeze(-2)
-
-                    #     for i in range (self.elayers, self.elayers + self.text_elayers):
-                    #         hs_pad_2, hs_mask= self.encoder.encoders[i](hs_pad_2, hs_mask)
-
-                else: # use hypothesis from CTC
-                    pass 
-            
-                # logging.warning(f'hs_pad after text_encoder:{hs_pad}')
                 
                 if (self.forward_again):
                     if (self.phoneme_input_layer > 0):
@@ -409,9 +417,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
                         if (self.encoder.normalize_before):
                             hs_pad_2 = self.encoder.after_norm(hs_pad_2)
-                else: # Calculate the MSE between 12th output and 8th layer
-                    pass
-    
+
         # 2. forward decoder
         if self.decoder is not None:
             ys_in_pad, ys_out_pad = add_sos_eos(
@@ -432,28 +438,35 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # TODO(karita) show predicted text
         # TODO(karita) calculate these stats
+
         cer_ctc = None
-        loss_intermediate_ctc = 0.0
-        loss_phn_ctc = 0.0
-        loss_phn_ctc_2 = 0.0
-        loss_ce = 0.0
-        loss_mse = 0.0
+        cer_phn = None
+        loss_intermediate_ctc = non_hierarchical
+        loss_phn_ctc = None
+        loss_phn_ctc_2 = None
+        loss_ce = None
+        loss_mse = None
+
         if self.mtlalpha == 0.0:
             loss_ctc = None
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
 
-
             # character ctc
             loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
-            loss_ctc_2 = 0.0
+
+            # character CTC after pretraining
+            loss_ctc_2 = None
             if (hs_pad_2 is not None and self.forward_again):
                 loss_ctc_2 = self.ctc(hs_pad_2.view(batch_size, -1, self.adim), hs_len, ys_pad)
 
             if not self.training and self.error_calculator is not None:
                 ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
+
+                ys_phn_hat = self.phn_ctc.argmax(hs_phn_1.view(batch_size, -1, self.adim)).data
+                cer_phn = self.phn_error_calculator(ys_phn_hat.cpu(), ys_pad.cpu(), is_ctc=True)
             # for visualization
             if not self.training:
                 self.ctc.softmax(hs_pad)
@@ -506,10 +519,10 @@ class E2E(ASRInterface, torch.nn.Module):
                 ) * loss_ctc + self.intermediate_ctc_weight * loss_intermediate_ctc
 
             if self.phn_ctc_weight > 0:
-                if (loss_ctc_2 > 0):
+                if (loss_ctc_2 is not None):
                     loss_ctc = loss_ctc + loss_ctc_2
 
-                if (loss_phn_ctc_2 > 0):
+                if (loss_phn_ctc_2 is not None):
                     loss_phn_ctc = loss_phn_ctc + loss_phn_ctc_2
                 
                 loss_ctc_data = (1 - self.phn_ctc_weight) * loss_ctc + self.phn_ctc_weight * loss_phn_ctc
@@ -559,7 +572,8 @@ class E2E(ASRInterface, torch.nn.Module):
                 wer, 
                 loss_data, 
                 loss_phn_ctc, 
-                loss_phn_ctc_2, 
+                loss_phn_ctc_2,
+                cer_phn, 
                 loss_ce,
                 loss_mse,
             )

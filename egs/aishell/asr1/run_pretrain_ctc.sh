@@ -47,7 +47,7 @@ data=/home/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="2022_2_18_Pretrain_CTC" # tag for managing experiments.
+tag="2022_2_27_Pretrain_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -265,10 +265,11 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --valid-json ${feat_dt_dir}/aishell2/text_data.json \
             --phn_dict ${phn_dict}
             # --preprocess-conf ${preprocess_config} \
+        resume=${expdir}/Pretrain_results/snapshot.ep.25
+        echo ${resume}
     fi
     echo "Training ASR side"
-    resume=${expdir}/Pretrain_results/snapshot.ep.25
-    echo ${resume}
+
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
             asr_train.py \
             --config ${train_config} \

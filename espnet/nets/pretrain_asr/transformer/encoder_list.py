@@ -293,7 +293,7 @@ class Encoder(torch.nn.Module):
             raise NotImplementedError("Support only linear or conv1d.")
         return positionwise_layer, positionwise_layer_args
 
-    def forward(self, xs, masks, start = 0, end = 12):
+    def forward(self, xs, masks):
         """Encode input sequence.
 
         Args:
@@ -305,23 +305,16 @@ class Encoder(torch.nn.Module):
             torch.Tensor: Mask tensor (#batch, time).
 
         """
-
-        if end > self.num_blocks:
-            logging.warning("forward blocks larger than maximum number")
-            end = self.num_blocks
-        
-        if start == 0:
-            if isinstance(
-                self.embed,
-                (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
-            ):
-                xs, masks = self.embed(xs, masks)
-            else:
-                xs = self.embed(xs)
+        if isinstance(
+            self.embed,
+            (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
+        ):
+            xs, masks = self.embed(xs, masks)
+        else:
+            xs = self.embed(xs)
 
         if self.intermediate_layers is None:
-            for i in range(start , end):
-                xs, masks = self.encoders[i](xs, masks)
+            xs, masks = self.encoders(xs, masks)
         else:
             intermediate_outputs = []
             for layer_idx, encoder_layer in enumerate(self.encoders):

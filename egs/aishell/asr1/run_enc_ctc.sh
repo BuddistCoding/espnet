@@ -42,7 +42,7 @@ data=/mnt/nas1/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="18layers_encoder_ctc" # tag for managing experiments.
+tag="18layers_encoder_ctc_lr01" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -273,8 +273,9 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            --rnnlm ${lmexpdir}/rnnlm.model.best \
-            ${recog_v2_opts}
+            # ${recog_v2_opts}
+            # --rnnlm ${lmexpdir}/rnnlm.model.best \
+            
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 
