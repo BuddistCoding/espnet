@@ -3,7 +3,7 @@
 
 # network architecture
 # encoder related
-elayers: 12
+elayers: 6
 eunits: 2048
 # decoder related
 # NOTE: we don't use any decoder as `mtlalpha == 1.0`.
@@ -36,7 +36,7 @@ dropout-rate: 0.1
 
 # transformer specific setting
 backend: pytorch
-model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer:E2E"
+model-module: "espnet.nets.pretrain_asr.e2e_asr_folded_ctc:E2E"
 transformer-input-layer: conv2d     # encoder architecture type
 transformer-lr: 1.0  # 10.0 may be too large for CTC-only models
 transformer-warmup-steps: 25000
@@ -46,8 +46,12 @@ transformer-init: pytorch
 
 # intermediate CTC + stochastic depth
 intermediate-ctc-layer: '6,12'
-intermediate-ctc-weight: 0.66
-stochastic-depth-rate: 0.3
+intermediate-ctc-weight: 0.0
+stochastic-depth-rate: 0.0
+
+# folded ctc
+folded-elayers: 3
+repeat-times: 4
 
 # Report CER & WER
 report-cer: true

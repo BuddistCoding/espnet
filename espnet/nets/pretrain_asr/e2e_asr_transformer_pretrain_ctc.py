@@ -466,7 +466,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
                 ys_phn_hat = self.phn_ctc.argmax(hs_phn_1.view(batch_size, -1, self.adim)).data
-                cer_phn = self.phn_error_calculator(ys_phn_hat.cpu(), ys_pad.cpu(), is_ctc=True)
+                cer_phn = self.phn_error_calculator(ys_phn_hat.cpu(), ys_phn.cpu(), is_ctc=True)
             # for visualization
             if not self.training:
                 self.ctc.softmax(hs_pad)
