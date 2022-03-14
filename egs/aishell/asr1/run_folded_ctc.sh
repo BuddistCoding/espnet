@@ -21,8 +21,8 @@ resume=        # Resume the training from snapshot
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_transformer_interctc.yaml
-lm_config=conf/lm.yaml
+train_config=conf/tuning/train_folded_ctc.yaml
+# lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
 # rnnlm related
@@ -34,15 +34,15 @@ ngramtag=
 n_gram=4
 
 # decoding parameter
-recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
+recog_model=model.loss.best # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
 n_average=10
 
 # data
-data=/mnt/nas1/ASR_Corpus
+data=/work/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="20220302_12layers_sto_0" # tag for managing experiments.
+tag="20220302" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -130,6 +130,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 fi
 
 dict=data/lang_1char/${train_set}_units.txt
+phn_dict=data/lang_1char/${train_set}_phn_units.txt
+
 echo "dictionary: ${dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
@@ -207,7 +209,7 @@ if [ -z ${tag} ]; then
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/interctc/${expname}
+expdir=exp/folded_ctc/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
@@ -227,12 +229,14 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --verbose ${verbose} \
         --resume ${resume} \
         --train-json ${feat_tr_dir}/data.json \
-        --valid-json ${feat_dt_dir}/data.json
+        --valid-json ${feat_dt_dir}/data.json \
+        --phn_dict ${phn_dict}
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
+    echo ${expdir}
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \

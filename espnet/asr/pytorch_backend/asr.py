@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+from xml.sax.handler import feature_external_ges
 
 from chainer import reporter as reporter_module
 from chainer import training
@@ -430,9 +431,9 @@ def train(args):
 
 
     # phoneme dim
-    if (args.phn_ctc_weight > 0.0):
-        args.pdim = int(valid_json[utts[0]]["output"][0]["pho_shape"].split(",")[-1])
-        logging.info("#phoneme dims: " + str(args.pdim))
+    
+    args.pdim = int(valid_json[utts[0]]["output"][0]["pho_shape"].split(",")[-1])
+    logging.info("#phoneme dims: " + str(args.pdim))
 
 
     # specify attention, CTC, hybrid mode
@@ -1115,8 +1116,8 @@ def recog(args):
 
     load_inputs_and_targets = LoadInputsAndTargets(
         mode="asr",
-        load_output=False,
-        sort_in_input_length=False,
+        load_output=True, #False
+        sort_in_input_length=True, # False
         preprocess_conf=train_args.preprocess_conf
         if args.preprocess_conf is None
         else args.preprocess_conf,
@@ -1156,9 +1157,9 @@ def recog(args):
                 logging.info("(%d/%d) decoding " + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
                 feat = load_inputs_and_targets(batch)
-                # logging.warning(f'feat:{feat[0][0]}')
+                # logging.warning(f'feat:{feat}')
                 feat = (
-                    feat[0][0]
+                    [feat[0][0], feat[1][0]]
                     if args.num_encs == 1
                     else [feat[idx][0] for idx in range(model.num_encs)]
                 )

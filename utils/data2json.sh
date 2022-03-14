@@ -138,9 +138,9 @@ if [ $# == 3 ]; then
     cat ${phn_text} > ${tmpdir}/output/phoneme.scp
 fi
 
-cat ${tmpdir}/output/phoneme.scp > ${dir}/temp/phoneme.scp
-cat ${tmpdir}/output/phonemeid.scp > ${dir}/temp/phonemeid.scp
-cat ${tmpdir}/output/pho_shape.scp > ${dir}/temp/pho_shape.scp
+# cat ${tmpdir}/output/phoneme.scp > ${dir}/temp/phoneme.scp
+# cat ${tmpdir}/output/phonemeid.scp > ${dir}/temp/phonemeid.scp
+# cat ${tmpdir}/output/pho_shape.scp > ${dir}/temp/pho_shape.scp
 
 # 3. Create scp files for the others
 mkdir -p ${tmpdir}/other

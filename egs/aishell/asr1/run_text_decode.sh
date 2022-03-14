@@ -15,19 +15,20 @@ debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
-resume=        # Resume the training from snapshot
-resume_fine_tuning=
+resume=    # Resume the training from snapshot
 
-Training=false
+pretrain=false
+training=false
+decode_text=false
 
 # feature configuration
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-Pretrain_config=conf/tuning/pretrain_pytorch_circular_transformer.yaml
-fine_tuning_config=conf/tuning/train_pytorch_circular_transformer.yaml
+train_config=conf/tuning/finetune_pretrain_ctc.yaml
+pretrain_config=conf/tuning/pretrain_pretrain_ctc.yaml
 lm_config=conf/lm.yaml
-decode_config=conf/decode.yaml
+decode_config=conf/tuning/decode_text.yaml
 
 # rnnlm related
 lm_resume=         # specify a snapshot file to resume LM training
@@ -42,12 +43,11 @@ recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.bes
 n_average=10
 
 # data
-data=/mnt/nas1/ASR_Corpus
+data=/work/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-# tag="2022_1_13_Pretrain_CTC" # tag for managing experiments.?
-tag="2022_2_16_12Layers_pinyin_g2p" # tag for managing experiments.
+tag="2022_2_18_Pretrain_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -142,12 +142,11 @@ phn_dict=data/lang_1char/${train_set}_phn_units.txt
 aishell2_dict=data/lang_1char/aishell2_${train_set}_units.txt
 aishell2_phn_dict=data/lang_1char/aishell2_${train_set}_phn_units.txt
 echo "dictionary: ${dict}"
-echo "pinyin_dictionary: ${phn_dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     echo "stage 2: Dictionary and Json Data Preparation"
     mkdir -p data/lang_1char/
-
+    
     echo "make a dictionary"
     echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
     # change the dict to aishell2 corpus
@@ -162,23 +161,25 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${phn_dict}
     wc -l ${phn_dict}
 
-    echo "make json files"
-    data2json.sh --feat ${feat_tr_dir}/feats.scp \
-		 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
+    # echo "make json files"
+    # data2json.sh --feat ${feat_tr_dir}/feats.scp \
+	# 	 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
     
-    
-        
-    for rtask in ${recog_set}; do
-        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        data2json.sh --feat ${feat_recog_dir}/feats.scp \
-		     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
-    done
+    # for rtask in ${recog_set}; do
+    #     feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+    #     data2json.sh --feat ${feat_recog_dir}/feats.scp \
+	# 	     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
+    # done
+
     
     echo "make aishell2 json files"
+    mkdir -p data/dump/train/aishell2
     data2json.sh --feat data/${train_set}/aishell2/feats.scp \
 		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
+        
 
     for rtask in ${recog_set}; do
+        mkdir -p data/dump/${rtask}/aishell2
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat data/${rtask}/aishell2/feats.scp \
 		     data/${rtask}/aishell2 ${dict} ${phn_dict} > ${feat_recog_dir}/aishell2/text_data.json
@@ -247,15 +248,14 @@ echo ${expname}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
-    if ${Training}; then
+    if ${pretrain}; then
         echo "PreTraining "
-        ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+        ${cuda_cmd} --gpu ${ngpu} ${expdir}/Pretrain.log \
             asr_train.py \
-            --config ${Pretrain_config} \
-            # --preprocess-conf ${preprocess_config} \
+            --config ${pretrain_config} \
             --ngpu ${ngpu} \
             --backend ${backend} \
-            --outdir ${expdir}/results \
+            --outdir ${expdir}/Pretrain_results \
             --tensorboard-dir tensorboard/${expname} \
             --debugmode ${debugmode} \
             --dict ${dict} \
@@ -266,27 +266,36 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --train-json ${feat_tr_dir}/aishell2/text_data.json \
             --valid-json ${feat_dt_dir}/aishell2/text_data.json \
             --phn_dict ${phn_dict}
+            # --preprocess-conf ${preprocess_config} \
+        resume=${expdir}/Pretrain_results/snapshot.ep.25
+        echo ${resume}
     fi
-        
-    echo "Training ASR side"
 
-    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-            asr_train.py \
-            --config ${fine_tuning_config} \
-            --preprocess-conf ${preprocess_config} \
-            --ngpu ${ngpu} \
-            --backend ${backend} \
-            --outdir ${expdir}/results \
-            --tensorboard-dir tensorboard/${expname} \
-            --debugmode ${debugmode} \
-            --dict ${dict} \
-            --debugdir ${expdir} \
-            --minibatches ${N} \
-            --verbose ${verbose} \
-            --resume ${resume} \
-            --train-json ${feat_tr_dir}/data.json \
-            --valid-json ${feat_dt_dir}/data.json \
-            --phn_dict ${phn_dict}
+    if ${training}; then
+        echo "Training ASR side"
+        if [ ! -z ${resume} ]; then
+            echo "load ${resume}"
+        fi
+        
+
+        ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+                asr_train.py \
+                --config ${train_config} \
+                --preprocess-conf ${preprocess_config} \
+                --ngpu ${ngpu} \
+                --backend ${backend} \
+                --outdir ${expdir}/results \
+                --tensorboard-dir tensorboard/${expname} \
+                --debugmode ${debugmode} \
+                --dict ${dict} \
+                --debugdir ${expdir} \
+                --minibatches ${N} \
+                --verbose ${verbose} \
+                --resume ${resume} \
+                --train-json ${feat_tr_dir}/data.json \
+                --valid-json ${feat_dt_dir}/data.json \
+                --phn_dict ${phn_dict}
+    fi
     
     # echo "Fine-tuning with right side"
     # ${cuda_cmd} --gpu ${ngpu} ${expdir}/fine_tuning_train.log \
@@ -308,17 +317,24 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     #     --phn_dict ${phn_dict}
 fi
 
+
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
-    if [[ $(get_yaml.py ${fine_tuning_config} model-module) = *transformer* ]] || \
-           [[ $(get_yaml.py ${fine_tuning_config} model-module) = *conformer* ]] || \
-           [[ $(get_yaml.py ${fine_tuning_config} etype) = custom ]] || \
-           [[ $(get_yaml.py ${fine_tuning_config} dtype) = custom ]]; then
+    snapshot=${expdir}/results/snapshot.ep.*
+    out=${expdir}/results
+    if ${decode_text}; then
+        snapshot=${expdir}/Pretrain_results/snapshot.ep.*
+        out=${expdir}/Pretrain_results
+    fi
+    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
+           [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
+           [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
+           [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots ${expdir}/results/snapshot.ep.* \
-        		       --out ${expdir}/results/${recog_model} \
+        		       --snapshots  ${snapshot} \
+        		       --out ${out}/${recog_model} \
         		       --num ${n_average}
     fi
 
@@ -330,31 +346,64 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         recog_v2_opts=""
     fi
 
+    
     pids=() # initialize pids
     for rtask in ${recog_set}; do
     (
-        decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_${lmtag}_${ngramtag}
-        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+        if ${decode_text}; then
+            echo "text decode"
+            decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_text_decode
+            feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}/aishell2
+            jsondata=${feat_recog_dir}/text_data.json
+            decode_config=conf/tuning/decode_text.yaml
+
+            splitjson.py --parts ${nj} ${jsondata}
+
+            #### use CPU for decoding
+            ngpu=0
+
+            echo ${decode_config}
+
+            ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                asr_recog.py \
+                --config ${decode_config} \
+                --ngpu ${ngpu} \
+                --backend ${backend} \
+                --batchsize 0 \
+                --recog-json ${feat_recog_dir}/split${nj}utt/text_data.JOB.json \
+                --result-label ${expdir}/${decode_dir}/data.JOB.json \
+                --model ${out}/${recog_model}  \
+                # --rnnlm ${lmexpdir}/rnnlm.model.best \
+                # ${recog_v2_opts}
+
+            score_sclite.sh ${expdir}/${decode_dir} ${dict}
+        else
+            decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_${lmtag}_${ngramtag}
+            feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+            jsondata=${feat_recog_dir}/data.json
+
+            splitjson.py --parts ${nj} ${jsondata}
+
+            #### use CPU for decoding
+            ngpu=0
+
+            ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                asr_recog.py \
+                --config ${decode_config} \
+                --ngpu ${ngpu} \
+                --backend ${backend} \
+                --batchsize 0 \
+                --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
+                --result-label ${expdir}/${decode_dir}/data.JOB.json \
+                --model ${expdir}/results/${recog_model}  \
+                # --rnnlm ${lmexpdir}/rnnlm.model.best \
+                # ${recog_v2_opts}
+
+            score_sclite.sh ${expdir}/${decode_dir} ${dict}
+        fi
 
         # split data
-        splitjson.py --parts ${nj} ${feat_recog_dir}/data.json
 
-        #### use CPU for decoding
-        ngpu=0
-
-        ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-            asr_recog.py \
-            --config ${decode_config} \
-            --ngpu ${ngpu} \
-            --backend ${backend} \
-            --batchsize 0 \
-            --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
-            --result-label ${expdir}/${decode_dir}/data.JOB.json \
-            --model ${expdir}/results/${recog_model}  \
-            # --rnnlm ${lmexpdir}/rnnlm.model.best \
-            # ${recog_v2_opts}
-
-        score_sclite.sh ${expdir}/${decode_dir} ${dict}
 
     ) &
     pids+=($!) # store background pids

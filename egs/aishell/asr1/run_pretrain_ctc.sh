@@ -15,17 +15,19 @@ debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
-resume=        # Resume the training from snapshot
+resume=    # Resume the training from snapshot
 
 
 training=false
 decode_text=false
 
+phn=g2p # or g2p
+
 # feature configuration
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/finetune_pretrain_ctc.yaml
+train_config=conf/tuning/train_pinyin_ctc.yaml
 pretrain_config=conf/tuning/pretrain_pretrain_ctc.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -43,11 +45,11 @@ recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.bes
 n_average=10
 
 # data
-data=/home/jason90255/ASR_Corpus
+data=/work/jason90255/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="2022_2_27_Pretrain_CTC" # tag for managing experiments.
+tag="2022_3_4_Pinyin_CTC" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
  
@@ -137,11 +139,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 fi
 
 dict=data/lang_1char/${train_set}_units.txt
-phn_dict=data/lang_1char/${train_set}_phn_units.txt
+phn_dict=data/lang_1char/${train_set}_${phn}_units.txt
 
 aishell2_dict=data/lang_1char/aishell2_${train_set}_units.txt
-aishell2_phn_dict=data/lang_1char/aishell2_${train_set}_phn_units.txt
+aishell2_phn_dict=data/lang_1char/aishell2_${train_set}_${phn}_units.txt
 echo "dictionary: ${dict}"
+echo "phn: ${phn}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     echo "stage 2: Dictionary and Json Data Preparation"
@@ -157,7 +160,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     echo "make phoneme dictionary"
     echo "<unk> 1" > ${phn_dict}
     # change the dict to aishell2 corpus
-    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text_g2p | cut -f 2- -d" " | tr " " "\n" \
+    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text_${phn} | cut -f 2- -d" " | tr " " "\n" \
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${phn_dict}
     wc -l ${phn_dict}
 
@@ -172,16 +175,18 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     done
 
     
-    echo "make aishell2 json files"
-    data2json.sh --feat data/${train_set}/aishell2/feats.scp \
-		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
+    # echo "make aishell2 json files"
+    # mkdir -p data/dump/train/aishell2
+    # data2json.sh --feat data/${train_set}/aishell2/feats.scp \
+	# 	 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
         
 
-    for rtask in ${recog_set}; do
-        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
-        data2json.sh --feat data/${rtask}/aishell2/feats.scp \
-		     data/${rtask}/aishell2 ${dict} ${phn_dict} > ${feat_recog_dir}/aishell2/text_data.json
-    done
+    # for rtask in ${recog_set}; do
+    #     mkdir -p data/dump/${rtask}/aishell2
+    #     feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+    #     data2json.sh --feat data/${rtask}/aishell2/feats.scp \
+	# 	     data/${rtask}/aishell2 ${dict} ${phn_dict} > ${feat_recog_dir}/aishell2/text_data.json
+    # done
 fi
 
 # you can skip this and remove --rnnlm option in the recognition (stage 5)
@@ -269,6 +274,10 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         echo ${resume}
     fi
     echo "Training ASR side"
+    if [ ! -z ${resume} ]; then
+        echo "load ${resume}"
+    fi
+    
 
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
             asr_train.py \

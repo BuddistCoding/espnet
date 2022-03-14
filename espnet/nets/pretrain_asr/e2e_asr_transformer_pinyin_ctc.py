@@ -10,6 +10,9 @@ import math
 import numpy
 import torch
 
+import chainer
+from chainer import reporter
+
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.ctc_prefix_score import CTCPrefixScore
 from espnet.nets.e2e_asr_common import end_detect
@@ -19,6 +22,7 @@ from espnet.nets.pytorch_backend.e2e_asr import CTC_LOSS_THRESHOLD
 from espnet.nets.pytorch_backend.e2e_asr import Reporter
 from espnet.nets.pytorch_backend.nets_utils import get_subsample
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
+from espnet.nets.pytorch_backend.nets_utils import pad_list
 from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.rnn.decoders import CTC_SCORING_RATIO
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
@@ -29,6 +33,7 @@ from espnet.nets.pytorch_backend.transformer.attention import (
     MultiHeadedAttention,  # noqa: H301
     RelPositionMultiHeadedAttention,  # noqa: H301
 )
+from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
 from espnet.nets.pytorch_backend.transformer.dynamic_conv import DynamicConvolution
 from espnet.nets.pytorch_backend.transformer.dynamic_conv2d import DynamicConvolution2D
@@ -42,6 +47,29 @@ from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.scorers.ctc import CTCPrefixScorer
 from espnet.utils.fill_missing_args import fill_missing_args
+
+from espnet.nets.pytorch_backend.transformer.encoder_list import Encoder as Encoder_list
+from torch.nn import CrossEntropyLoss, MSELoss
+
+import time
+
+class Cir_Reporter(chainer.Chain):
+    """A chainer reporter wrapper."""
+
+    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss, phn_loss, phn_loss_2, loss_ce, loss_mse):
+        """Report at every step."""
+        reporter.report({"loss_ctc": loss_ctc}, self)
+        reporter.report({"pinyin_ctc": phn_loss}, self)
+        reporter.report({"pinyin_ctc after text encoder": phn_loss_2}, self)
+        reporter.report({"loss_att": loss_att}, self)
+        reporter.report({"acc": acc}, self)
+        reporter.report({"cer_ctc": cer_ctc}, self)
+        reporter.report({"cer": cer}, self)
+        reporter.report({"wer": wer}, self)
+        logging.info("mtl loss:" + str(mtl_loss))
+        reporter.report({"loss": mtl_loss}, self)
+        reporter.report({"Cross Entropy loss": loss_ce}, self)
+        reporter.report({"MSE loss between 8th & 12th": loss_mse }, self)
 
 
 class E2E(ASRInterface, torch.nn.Module):
@@ -93,23 +121,80 @@ class E2E(ASRInterface, torch.nn.Module):
                 int(i) for i in args.intermediate_ctc_layer.split(",")
             ]
 
-        self.encoder = Encoder(
-            idim=idim,
-            selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
-            attention_dim=args.adim,
-            attention_heads=args.aheads,
-            conv_wshare=args.wshare,
-            conv_kernel_length=args.ldconv_encoder_kernel_length,
-            conv_usebias=args.ldconv_usebias,
-            linear_units=args.eunits,
-            num_blocks=args.elayers,
-            input_layer=args.transformer_input_layer,
-            dropout_rate=args.dropout_rate,
-            positional_dropout_rate=args.dropout_rate,
-            attention_dropout_rate=args.transformer_attn_dropout_rate,
-            stochastic_depth_rate=args.stochastic_depth_rate,
-            intermediate_layers=self.intermediate_ctc_layers,
-        )
+        self.elayers = args.elayers
+        self.text_elayers = args.text_elayers
+        self.phoneme_input_layer = args.phoneme_input_layer
+        self.phoneme_output_layer = args.phoneme_output_layer
+
+        if self.phoneme_input_layer > 0 and self.phoneme_output_layer > 0:
+            assert(self.phoneme_input_layer <= self.phoneme_output_layer)
+        self.add_text_encoder = args.add_text_encoder
+
+        self.mode = args.train_mode if args.train_mode == 'text' else 'asr'
+
+        self.ce = CrossEntropyLoss(ignore_index = -1)
+        self.mse = MSELoss()
+
+        if args.phn_ctc_weight > 0.0:
+            
+            self.text_embed = torch.nn.Sequential(
+                torch.nn.Embedding(
+                    odim, 
+                    args.adim,
+                    padding_idx=0,
+                ),
+                PositionalEncoding(args.adim, 0.1)
+            )
+
+            logging.warning(f'asr elayers:{args.elayers}')
+            logging.warning(f'text_elayers:{args.text_elayers}')
+
+            self.encoder = Encoder_list(
+                idim=idim,
+                selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
+                attention_dim=args.adim,
+                attention_heads=args.aheads,
+                conv_wshare=args.wshare,
+                conv_kernel_length=args.ldconv_encoder_kernel_length,
+                conv_usebias=args.ldconv_usebias,
+                linear_units=args.eunits,
+                num_blocks=(args.elayers + args.text_elayers),
+                input_layer=args.transformer_input_layer,
+                dropout_rate=args.dropout_rate,
+                positional_dropout_rate=args.dropout_rate,
+                attention_dropout_rate=args.transformer_attn_dropout_rate,
+                stochastic_depth_rate=args.stochastic_depth_rate,
+                intermediate_layers=self.intermediate_ctc_layers,
+            )
+            
+            self.phn_ctc = CTC(
+                args.pdim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True
+            )
+
+
+        else:
+            logging.warning('args.phn_ctc_weight == 0.0, so No Phn_CTC')
+            logging.warning(f'elayers: {self.elayers}')
+            self.encoder = Encoder(
+                idim=idim,
+                selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
+                attention_dim=args.adim,
+                attention_heads=args.aheads,
+                conv_wshare=args.wshare,
+                conv_kernel_length=args.ldconv_encoder_kernel_length,
+                conv_usebias=args.ldconv_usebias,
+                linear_units=args.eunits,
+                num_blocks=args.elayers,
+                input_layer=args.transformer_input_layer,
+                dropout_rate=args.dropout_rate,
+                positional_dropout_rate=args.dropout_rate,
+                attention_dropout_rate=args.transformer_attn_dropout_rate,
+                stochastic_depth_rate=args.stochastic_depth_rate,
+                intermediate_layers=self.intermediate_ctc_layers,
+            )
+            self.phn_ctc = None
+        
+
         if args.mtlalpha < 1:
             self.decoder = Decoder(
                 odim=odim,
@@ -135,17 +220,21 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             self.decoder = None
             self.criterion = None
+
         self.blank = 0
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
         self.ignore_id = ignore_id
         self.subsample = get_subsample(args, mode="asr", arch="transformer")
-        self.reporter = Reporter()
+        self.reporter = Cir_Reporter()
 
         self.reset_parameters(args)
         self.adim = args.adim  # used for CTC (equal to d_model)
         self.mtlalpha = args.mtlalpha
+        self.phn_ctc_weight = args.phn_ctc_weight
+        self.ce_weight = args.ce_weight
+        self.forward_again = args.forward_again
 
         if args.mtlalpha > 0.0:
             self.ctc = CTC(
@@ -162,12 +251,36 @@ class E2E(ASRInterface, torch.nn.Module):
                 args.report_cer,
                 args.report_wer,
             )
+            self.phn_error_calculator = ErrorCalculator(
+                args.pho_list,
+                args.sym_space,
+                args.sym_blank,
+                args.report_cer,
+                args.report_wer,
+            )
         else:
             self.error_calculator = None
         self.rnnlm = None
+        
+        self.use_hyp = args.use_hyp if (args.use_hyp == "hyp" or args.use_hyp == "tru") else "hid"
 
-        logging.warning(f'#params in encoder:{sum(p.numel() for p in self.encoder.parameters())}')
-        logging.warning(f'#params in ctc:{sum(p.numel() for p in self.ctc.ctc_lo.parameters())}')
+        
+        logging.warning(f'add_text_encoder:{self.add_text_encoder}')
+        logging.warning(f'use_hyp:{self.use_hyp}')
+        logging.warning(f'mode:{self.mode}')
+        logging.warning(f'forward again:{self.forward_again}')
+        logging.warning(f'phoneme_input_layer:{self.phoneme_input_layer}')
+        logging.warning(f'phoneme_output_layer:{self.phoneme_output_layer}')
+        logging.warning(f'phoneme_ctc_weight:{self.phn_ctc_weight}')
+        logging.warning(f'Cross Entropy weight:{self.ce_weight}')
+        logging.warning(f'encoders: \n{self.encoder}')
+
+        if (self.mode == 'asr' and self.text_elayers > 0):
+            for i , layer in enumerate(self.encoder.encoders[self.elayers: self.elayers + self.text_elayers]):
+                logging.warning(f'freeze layer {self.elayers + i + 1}')
+                for param in layer.parameters():
+                    param.requires_grad = False
+        
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -195,7 +308,7 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             logging.warning(f'ys_pad:{ys_pad}')
             assert (len(ys_pad) <= 2)
-        
+
         olens = None
         if len(ilens) == 1:
             ilens = ilens[0]
@@ -204,13 +317,80 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             logging.warning(f'ilens:{ilens}')
             assert (len(ilens) <= 2)
+        
+        if self.mode == 'text':
+            xs_pad = ys_pad
+            ilens = olens.tolist()
 
+        else:
+            ilens = ilens.tolist()  
+        
+        
         # 1. forward encoder
         xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
-        src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask, hs_intermediates = self.encoder(xs_pad, src_mask)
+        src_mask = make_non_pad_mask(ilens).to(xs_pad.device).unsqueeze(-2)
+        if (self.mode == 'asr'):
+
+            hs_pad, hs_mask = self.encoder.embed(xs_pad, src_mask)
+        else: # Text mode
+            xs_pad[xs_pad == -1] = 0
+            hs_pad = self.text_embed(xs_pad)
+            hs_mask = src_mask
+
+        hs_phn_1 = None
+        hs_phn_2 = None
+        hs_intermediates = []
+
+        if (self.mode == 'asr'):
+            for i, layer in enumerate(self.encoder.encoders[:self.elayers]):
+                hs_pad, hs_mask = layer(hs_pad, hs_mask)
+                if (i + 1 == self.phoneme_output_layer):
+                        hs_phn_1 = hs_pad
+                        if (self.encoder.normalize_before):
+                            hs_phn_1 = self.encoder.after_norm(hs_phn_1)
+
+        else :
+            logging.warning('text mode')
+            for i, layer in enumerate(self.encoder.encoders[self.elayers:]):
+                hs_pad, hs_mask = layer(hs_pad, hs_mask)
+
+            for i, layer in enumerate(self.encoder.encoders[self.phoneme_input_layer - 1 : self.elayers]):
+                hs_pad, hs_mask = layer(hs_pad, hs_mask)
+                if (i + 1 == self.phoneme_output_layer):
+                    hs_phn_1 = hs_pad
+                    if (self.encoder.normalize_before):
+                        hs_phn_1 = self.encoder.after_norm(hs_phn_1)
+
+        hs_pad_2 = None
+        if (self.add_text_encoder):
+            hs_pad_2 = hs_pad
+
+        if (self.encoder.normalize_before):
+            hs_pad = self.encoder.after_norm(hs_pad)
+        
         self.hs_pad = hs_pad
 
+        if (self.mode == 'asr'):
+            # FOR Phoneme CTC
+            if (self.add_text_encoder):
+                ys_text = ys_pad
+                if (self.use_hyp == "hid"):
+                    for i in range (self.elayers, self.elayers + self.text_elayers):
+                        hs_pad_2, hs_mask= self.encoder.encoders[i](hs_pad_2, hs_mask)
+                    
+                
+                if (self.forward_again):
+                    if (self.phoneme_input_layer > 0):
+                        for i , layer in (self.encoder.encoders[self.phoneme_input_layer - 1 : self.elayers]):
+                            hs_pad_2 = layer(hs_pad_2, hs_mask)
+                            if (i + self.phoneme_input_layer == self.phoneme_output_layer):
+                                hs_phn_2 = hs_pad_2
+                                if (self.encoder.normalize_before):
+                                    hs_phn_2 = self.encoder.after_norm(hs_phn_2)
+
+                        if (self.encoder.normalize_before):
+                            hs_pad_2 = self.encoder.after_norm(hs_pad_2)
+    
         # 2. forward decoder
         if self.decoder is not None:
             ys_in_pad, ys_out_pad = add_sos_eos(
@@ -232,14 +412,24 @@ class E2E(ASRInterface, torch.nn.Module):
         # TODO(karita) show predicted text
         # TODO(karita) calculate these stats
         cer_ctc = None
-        loss_intermediate_ctc = 0.0
+        loss_intermediate_ctc = None
+        loss_phn_ctc = None
+        loss_phn_ctc_2 = None
+        loss_ce = None
+        loss_mse = None
         if self.mtlalpha == 0.0:
             loss_ctc = None
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            # ys_pad = ys_pad[0]
+
+
+            # character ctc
             loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
+            loss_ctc_2 = 0.0
+            if (hs_pad_2 is not None and self.forward_again):
+                loss_ctc_2 = self.ctc(hs_pad_2.view(batch_size, -1, self.adim), hs_len, ys_pad)
+
             if not self.training and self.error_calculator is not None:
                 ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
@@ -257,6 +447,22 @@ class E2E(ASRInterface, torch.nn.Module):
 
                 loss_intermediate_ctc /= len(self.intermediate_ctc_layers)
 
+
+            if self.phn_ctc_weight > 0:
+                if hs_phn_1 is not None:
+                    loss_phn_ctc = self.phn_ctc(hs_phn_1.view(batch_size, -1, self.adim), hs_len, ys_phn)
+                    # loss_phn_ctc += loss_phn
+
+                if hs_phn_2 is not None:
+                    # xs_pad,  hs_mask, _, hs_phn = self.encoder(xs_pad, src_mask, h = hs_pad)
+                    loss_phn_ctc_2 = self.phn_ctc(hs_phn_2.view(batch_size, -1, self.adim), hs_len, ys_phn)
+
+        if (self.mode == 'text' and self.ce_weight > 0):
+            loss_ce = self.ce(self.ctc.softmax(self.ctc.dropout(hs_pad)).view(batch_size, self.odim, -1), ys_pad)
+        
+        if (self.mode == 'asr' and self.add_text_encoder and not self.forward_again):
+            loss_mse = self.mse(hs_pad, hs_pad_2)
+
         # 5. compute cer/wer
         if self.training or self.error_calculator is None or self.decoder is None:
             cer, wer = None, None
@@ -265,6 +471,7 @@ class E2E(ASRInterface, torch.nn.Module):
             cer, wer = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
 
         # copied from e2e_asr
+        
         alpha = self.mtlalpha
         if alpha == 0:
             self.loss = loss_att
@@ -276,26 +483,71 @@ class E2E(ASRInterface, torch.nn.Module):
                 self.loss = (
                     1 - self.intermediate_ctc_weight
                 ) * loss_ctc + self.intermediate_ctc_weight * loss_intermediate_ctc
+
+            if self.phn_ctc_weight > 0:
+                if (loss_ctc_2 > 0):
+                    loss_ctc = loss_ctc + loss_ctc_2
+
+                if (loss_phn_ctc_2 > 0):
+                    loss_phn_ctc = loss_phn_ctc + loss_phn_ctc_2
+                
+                loss_ctc_data = (1 - self.phn_ctc_weight) * loss_ctc + self.phn_ctc_weight * loss_phn_ctc
+
+                self.loss = (1 - self.ce_weight) * loss_ctc_data
+
+                if (self.ce_weight > 0):
+                    self.loss += self.ce_weight * loss_ce
+                
+                if (loss_mse > 0):
+                    self.loss += loss_mse
+            
             loss_att_data = None
             loss_ctc_data = float(loss_ctc)
         else:
             self.loss = alpha * loss_ctc + (1 - alpha) * loss_att
             if self.intermediate_ctc_weight > 0:
                 self.loss = (
-                    (1 - alpha - self.intermediate_ctc_weight) * loss_att
-                    + alpha * loss_ctc
-                    + self.intermediate_ctc_weight * loss_intermediate_ctc
-                )
+                        (1 - alpha - self.phn_ctc_weight) * loss_att
+                        + alpha * loss_ctc
+                        + self.intermediate_ctc_weight * loss_intermediate_ctc
+                    )
+                
+            elif self.phn_ctc_weight > 0:
+                self.loss = (
+                    (1 - self.ce_weight) * (
+                        (1 - alpha) * loss_att
+                        + alpha * loss_ctc
+                        + self.phn_ctc_weight * (loss_phn_ctc + loss_phn_ctc_2)
+                    )
+                        + self.ce_weight * loss_ce
+                    )
+                    
             loss_att_data = float(loss_att)
             loss_ctc_data = float(loss_ctc)
+            
 
         loss_data = float(self.loss)
+        # logging.warning(f'\nctc_loss:{loss_ctc} \nphn_ctc_loss:{loss_phn_ctc} \nloss_data:{loss_data}')
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
             self.reporter.report(
-                loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data
+                loss_ctc_data, 
+                loss_att_data, 
+                self.acc, 
+                cer_ctc,
+                cer, 
+                wer, 
+                loss_data, 
+                loss_phn_ctc, 
+                loss_phn_ctc_2, 
+                loss_ce,
+                loss_mse,
             )
         else:
             logging.warning("loss (=%f) is not correct", loss_data)
+        
+        # logging.warning(f'end time:{time.time() - start_time}')
+        # logging.warning(f'total time:{time.time() - org_time}')
+
         return self.loss
 
     def scorers(self):
@@ -311,8 +563,22 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
-        enc_output, _, _ = self.encoder(x, None)
-        return enc_output.squeeze(0)
+
+        if (self.mode == 'asr'):
+            x, _ = self.encoder.embed(x, None)
+            for i in range(self.elayers):
+                # logging.warning(f'Decoding : forward {i + 1} layer.')
+                x, _ = self.encoder.encoders[i](x, None)
+            
+        elif (self.mode == 'text'):
+            x, _ = self.encoder.text_embed(x, None)
+            for i in range(self.text_elayers):
+                x, self.encoder.encoders[self.elayers + i](x, None)
+            for i in range(self.phoneme_input_layer - 1, self.elayers):
+                # logging.warning(f'layer:{i}')
+                hs_pad, hs_mask = self.encoder.encoders[i](hs_pad, hs_mask)   
+        
+        return x.squeeze(0)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         """Recognize input speech.
@@ -324,6 +590,11 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
+        # if (self.mode == 'asr'):
+        #     x = x[0]
+        # elif (self.mode == 'text'):
+        #     x = x[1]
+
         enc_output = self.encode(x).unsqueeze(0)
         if self.mtlalpha == 1.0:
             recog_args.ctc_weight = 1.0
@@ -340,6 +611,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 raise NotImplementedError("Pure CTC beam search is not implemented.")
             # TODO(hirofumi0810): Implement beam search
             return nbest_hyps
+
         elif self.mtlalpha > 0 and recog_args.ctc_weight > 0.0:
             lpz = self.ctc.log_softmax(enc_output)
             lpz = lpz.squeeze(0)
@@ -553,7 +825,15 @@ class E2E(ASRInterface, torch.nn.Module):
                 or isinstance(m, DynamicConvolution)
                 or isinstance(m, RelPositionMultiHeadedAttention)
             ):
-                ret[name] = m.attn.cpu().numpy()
+                prob = ""
+                if (isinstance(m, MultiHeadedAttention)):
+                    prob = "MultiheadAtt"
+                elif (isinstance(m, DynamicConvolution)):
+                    prob = "DynamicConv"
+                elif (isinstance(m, RelPositionMultiHeadedAttention)):
+                    prob = "RelPositionMultiHeadedAtt"
+                if (m.attn is not None):
+                    ret[name] = m.attn.cpu().numpy()
             if isinstance(m, DynamicConvolution2D):
                 ret[name + "_time"] = m.attn_t.cpu().numpy()
                 ret[name + "_freq"] = m.attn_f.cpu().numpy()

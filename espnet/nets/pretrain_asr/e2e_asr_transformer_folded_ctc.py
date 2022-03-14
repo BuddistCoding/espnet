@@ -32,7 +32,7 @@ from espnet.nets.pytorch_backend.transformer.attention import (
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
 from espnet.nets.pytorch_backend.transformer.dynamic_conv import DynamicConvolution
 from espnet.nets.pytorch_backend.transformer.dynamic_conv2d import DynamicConvolution2D
-from espnet.nets.pytorch_backend.transformer.encoder import Encoder
+from espnet.nets.pretrain_asr.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
 from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import (
     LabelSmoothingLoss,  # noqa: H301
@@ -43,6 +43,8 @@ from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.scorers.ctc import CTCPrefixScorer
 from espnet.utils.fill_missing_args import fill_missing_args
 
+from torch.nn import Linear
+
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -52,16 +54,35 @@ class E2E(ASRInterface, torch.nn.Module):
     :param Namespace args: argument Namespace containing options
 
     """
-
     @staticmethod
     def add_arguments(parser):
         """Add arguments."""
         group = parser.add_argument_group("transformer model setting")
-
+         
         group = add_arguments_transformer_common(group)
+        E2E.add_folded_encoder_arguments(parser)
 
         return parser
+    
+    @staticmethod
+    def add_folded_encoder_arguments(parser):
+        group = parser.add_argument_group("folded encoder setting")
 
+        group.add_argument(
+            "--folded-elayers",
+            default=0,
+            type=int,
+        )
+
+        group.add_argument(
+            "--repeat-times",
+            default=0,
+            type=int,
+        )
+
+
+        return parser
+    
     @property
     def attention_plot_class(self):
         """Return PlotAttentionReport."""
@@ -92,6 +113,8 @@ class E2E(ASRInterface, torch.nn.Module):
             self.intermediate_ctc_layers = [
                 int(i) for i in args.intermediate_ctc_layer.split(",")
             ]
+        self.repeat_times = args.repeat_times
+        self.folded_elayers = args.folded_elayers
 
         self.encoder = Encoder(
             idim=idim,
@@ -110,31 +133,36 @@ class E2E(ASRInterface, torch.nn.Module):
             stochastic_depth_rate=args.stochastic_depth_rate,
             intermediate_layers=self.intermediate_ctc_layers,
         )
-        if args.mtlalpha < 1:
-            self.decoder = Decoder(
-                odim=odim,
-                selfattention_layer_type=args.transformer_decoder_selfattn_layer_type,
-                attention_dim=args.adim,
-                attention_heads=args.aheads,
-                conv_wshare=args.wshare,
-                conv_kernel_length=args.ldconv_decoder_kernel_length,
-                conv_usebias=args.ldconv_usebias,
-                linear_units=args.dunits,
-                num_blocks=args.dlayers,
-                dropout_rate=args.dropout_rate,
-                positional_dropout_rate=args.dropout_rate,
-                self_attention_dropout_rate=args.transformer_attn_dropout_rate,
-                src_attention_dropout_rate=args.transformer_attn_dropout_rate,
-            )
-            self.criterion = LabelSmoothingLoss(
-                odim,
-                ignore_id,
-                args.lsm_weight,
-                args.transformer_length_normalized_loss,
-            )
-        else:
-            self.decoder = None
-            self.criterion = None
+        
+        self.folded_encoder = None
+        self.cond_linear = None
+
+        if (args.folded_elayers > 0):
+            self.folded_encoder = Encoder(
+            idim=args.adim,
+            selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
+            attention_dim=args.adim,
+            attention_heads=args.aheads,
+            conv_wshare=args.wshare,
+            conv_kernel_length=args.ldconv_encoder_kernel_length,
+            conv_usebias=args.ldconv_usebias,
+            linear_units=args.eunits,
+            num_blocks=args.folded_elayers,
+            input_layer=None,                     # need to check difference between None and identity
+            dropout_rate=args.dropout_rate,
+            positional_dropout_rate=args.dropout_rate,
+            attention_dropout_rate=args.transformer_attn_dropout_rate,
+            stochastic_depth_rate=args.stochastic_depth_rate,
+            intermediate_layers=self.intermediate_ctc_layers,
+            ) 
+
+            logging.warning(f'pdim:{args.pdim}')
+
+            self.cond_linear = Linear(odim, args.adim)
+        
+        self.decoder = None
+        self.criterion = None
+    
         self.blank = 0
         self.sos = odim - 1
         self.eos = odim - 1
@@ -151,6 +179,10 @@ class E2E(ASRInterface, torch.nn.Module):
             self.ctc = CTC(
                 odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True
             )
+
+            # self.phn_ctc = CTC(
+            #     args.pdim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True
+            # )
         else:
             self.ctc = None
 
@@ -165,9 +197,24 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             self.error_calculator = None
         self.rnnlm = None
+        
+        logging.warning(f'elayers:{args.elayers}')
+        logging.warning(f'folded_elayers:{self.folded_elayers}')
+        logging.warning(f'repeat_times:{self.repeat_times}')
+        logging.warning(f'encoder:{self.encoder}')
+        logging.warning(f'folded_encoder:{self.folded_encoder}')
+        logging.warning(f'#params of base encoder:{sum(p.numel() for p in self.encoder.parameters())}')
+        logging.warning(f'#parans of folded encoder :{sum(p.numel() for p in self.folded_encoder.parameters())}')
+        logging.warning(f'#params of cond_linear:{sum(p.numel() for p in self.cond_linear.parameters())}')
+        logging.warning(f'#params of ctc:{sum(p.numel() for p in self.ctc.ctc_lo.parameters())}')
 
-        logging.warning(f'#params in encoder:{sum(p.numel() for p in self.encoder.parameters())}')
-        logging.warning(f'#params in ctc:{sum(p.numel() for p in self.ctc.ctc_lo.parameters())}')
+        total_num = (
+            sum(p.numel() for p in self.ctc.ctc_lo.parameters()) + 
+            sum(p.numel() for p in self.cond_linear.parameters()) +
+            sum(p.numel() for p in self.folded_encoder.parameters()) +
+            sum(p.numel() for p in self.encoder.parameters())
+        )
+        logging.warning(f'#params of whole model:{total_num}')
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -204,12 +251,25 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             logging.warning(f'ilens:{ilens}')
             assert (len(ilens) <= 2)
-
+        
         # 1. forward encoder
         xs_pad = xs_pad[:, : max(ilens)]  # for data parallel
         src_mask = make_non_pad_mask(ilens.tolist()).to(xs_pad.device).unsqueeze(-2)
         hs_pad, hs_mask, hs_intermediates = self.encoder(xs_pad, src_mask)
         self.hs_pad = hs_pad
+
+        batch_size = xs_pad.size(0)
+        hs_len = hs_mask.view(batch_size, -1).sum(1)
+        
+        cond_ctc_loss = []
+        if (self.folded_elayers > 0 and self.repeat_times > 0):
+            for i in range(self.repeat_times):
+                hs_pad, hs_mask, hs_intermediate  = self.folded_encoder(hs_pad, hs_mask)
+                if (i < self.repeat_times - 1):
+                    cond_ctc_loss.append(self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad))
+                    hs_pad = self.cond_linear(self.ctc.softmax(hs_pad.view(batch_size, -1, self.adim))) + hs_pad
+                else:
+                    cond_ctc_loss.append(self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad))
 
         # 2. forward decoder
         if self.decoder is not None:
@@ -239,7 +299,11 @@ class E2E(ASRInterface, torch.nn.Module):
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
             # ys_pad = ys_pad[0]
-            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
+            if (len(cond_ctc_loss) > 0):
+                loss_ctc = sum(cond_ctc_loss) / self.repeat_times
+            else:
+                loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
+            
             if not self.training and self.error_calculator is not None:
                 ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)

@@ -16,12 +16,15 @@ dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
 verbose=0      # verbose option
 resume=        # Resume the training from snapshot
+resume_fine_tuning=
+
+Training=false
 
 # feature configuration
 do_delta=false
 
 preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_transformer_interctc.yaml
+fine_tuning_config=conf/tuning/train_pytorch_circular_transformer.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -42,10 +45,11 @@ data=/mnt/nas1/ASR_Corpus
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="20220302_12layers_sto_0" # tag for managing experiments.
+# tag="2022_1_13_Pretrain_CTC" # tag for managing experiments.?
+tag="2022_2_16_12Layers_pinyin_g2p" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
-
+ 
 # Set bash to 'debug' mode, it will exit on :
 # -e 'error', -u 'undefined variable', -o ... 'error in pipeline', -x 'print commands',
 set -e
@@ -78,6 +82,7 @@ fi
 
 feat_tr_dir=${dumpdir}/${train_set}/delta${do_delta}; mkdir -p ${feat_tr_dir}
 feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
+
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
@@ -100,9 +105,10 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     # utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
     # utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
     # rm -r data/temp1 data/temp2 data/temp3
-    # steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
-    #     data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
-    # utils/fix_data_dir.sh data/${train_set}
+
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+        data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
+    utils/fix_data_dir.sh data/${train_set}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
@@ -130,7 +136,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 fi
 
 dict=data/lang_1char/${train_set}_units.txt
+phn_dict=data/lang_1char/${train_set}_phn_units.txt
+
+aishell2_dict=data/lang_1char/aishell2_${train_set}_units.txt
+aishell2_phn_dict=data/lang_1char/aishell2_${train_set}_phn_units.txt
 echo "dictionary: ${dict}"
+echo "pinyin_dictionary: ${phn_dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     echo "stage 2: Dictionary and Json Data Preparation"
@@ -138,21 +149,42 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 
     echo "make a dictionary"
     echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
+    # change the dict to aishell2 corpus
     text2token.py -s 1 -n 1 data/${train_set}/text | cut -f 2- -d" " | tr " " "\n" \
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${dict}
     wc -l ${dict}
 
+    echo "make phoneme dictionary"
+    echo "<unk> 1" > ${phn_dict}
+    # change the dict to aishell2 corpus
+    text2token.py -s 1 -n 1 -t zhphn data/${train_set}/phn_text_g2p | cut -f 2- -d" " | tr " " "\n" \
+    | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${phn_dict}
+    wc -l ${phn_dict}
+
     echo "make json files"
     data2json.sh --feat ${feat_tr_dir}/feats.scp \
-		 data/${train_set} ${dict} > ${feat_tr_dir}/data.json
+		 data/${train_set} ${dict} ${phn_dict} > ${feat_tr_dir}/data.json
+    
+    
+        
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \
-		     data/${rtask} ${dict} > ${feat_recog_dir}/data.json
+		     data/${rtask} ${dict} ${phn_dict} > ${feat_recog_dir}/data.json
+    done
+    
+    echo "make aishell2 json files"
+    data2json.sh --feat data/${train_set}/aishell2/feats.scp \
+		 data/${train_set}/aishell2 ${dict} ${phn_dict} > ${feat_tr_dir}/aishell2/text_data.json
+
+    for rtask in ${recog_set}; do
+        feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
+        data2json.sh --feat data/${rtask}/aishell2/feats.scp \
+		     data/${rtask}/aishell2 ${dict} ${phn_dict} > ${feat_recog_dir}/aishell2/text_data.json
     done
 fi
 
-# # you can skip this and remove --rnnlm option in the recognition (stage 5)
+# you can skip this and remove --rnnlm option in the recognition (stage 5)
 # if [ -z ${lmtag} ]; then
 #     lmtag=$(basename ${lm_config%.*})
 # fi
@@ -167,9 +199,9 @@ fi
 # fi
 # mkdir -p ${ngramexpdir}
 
-# skip_lm_training=true
 
-# if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ] && ${skip_lm_training}; then
+
+# if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
 #     echo "stage 3: LM Preparation"
 #     lmdatadir=data/local/lm_train
 #     mkdir -p ${lmdatadir}
@@ -207,36 +239,81 @@ if [ -z ${tag} ]; then
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/interctc/${expname}
+expdir=exp/${expname}
 mkdir -p ${expdir}
+
+echo ${expname}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
+    if ${Training}; then
+        echo "PreTraining "
+        ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
+            asr_train.py \
+            --config ${Pretrain_config} \
+            # --preprocess-conf ${preprocess_config} \
+            --ngpu ${ngpu} \
+            --backend ${backend} \
+            --outdir ${expdir}/results \
+            --tensorboard-dir tensorboard/${expname} \
+            --debugmode ${debugmode} \
+            --dict ${dict} \
+            --debugdir ${expdir} \
+            --minibatches ${N} \
+            --verbose ${verbose} \
+            --resume ${resume} \
+            --train-json ${feat_tr_dir}/aishell2/text_data.json \
+            --valid-json ${feat_dt_dir}/aishell2/text_data.json \
+            --phn_dict ${phn_dict}
+    fi
+        
+    echo "Training ASR side"
+
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train.py \
-        --config ${train_config} \
-        --preprocess-conf ${preprocess_config} \
-        --ngpu ${ngpu} \
-        --backend ${backend} \
-        --outdir ${expdir}/results \
-        --tensorboard-dir tensorboard/${expname} \
-        --debugmode ${debugmode} \
-        --dict ${dict} \
-        --debugdir ${expdir} \
-        --minibatches ${N} \
-        --verbose ${verbose} \
-        --resume ${resume} \
-        --train-json ${feat_tr_dir}/data.json \
-        --valid-json ${feat_dt_dir}/data.json
+            asr_train.py \
+            --config ${fine_tuning_config} \
+            --preprocess-conf ${preprocess_config} \
+            --ngpu ${ngpu} \
+            --backend ${backend} \
+            --outdir ${expdir}/results \
+            --tensorboard-dir tensorboard/${expname} \
+            --debugmode ${debugmode} \
+            --dict ${dict} \
+            --debugdir ${expdir} \
+            --minibatches ${N} \
+            --verbose ${verbose} \
+            --resume ${resume} \
+            --train-json ${feat_tr_dir}/data.json \
+            --valid-json ${feat_dt_dir}/data.json \
+            --phn_dict ${phn_dict}
+    
+    # echo "Fine-tuning with right side"
+    # ${cuda_cmd} --gpu ${ngpu} ${expdir}/fine_tuning_train.log \
+    #     asr_train.py \
+    #     --config ${fine_tuning_config} \
+    #     --preprocess-conf ${preprocess_config} \
+    #     --ngpu ${ngpu} \
+    #     --backend ${backend} \
+    #     --outdir ${expdir}/finetune_results \
+    #     --tensorboard-dir tensorboard/${expname} \
+    #     --debugmode ${debugmode} \
+    #     --dict ${dict} \
+    #     --debugdir ${expdir} \
+    #     --minibatches ${N} \
+    #     --verbose ${verbose} \
+    #     --resume ${resume_fine_tuning} \
+    #     --train-json ${feat_tr_dir}/data.json \
+    #     --valid-json ${feat_dt_dir}/data.json \
+    #     --phn_dict ${phn_dict}
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
-    if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
-           [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
-           [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
-           [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
+    if [[ $(get_yaml.py ${fine_tuning_config} model-module) = *transformer* ]] || \
+           [[ $(get_yaml.py ${fine_tuning_config} model-module) = *conformer* ]] || \
+           [[ $(get_yaml.py ${fine_tuning_config} etype) = custom ]] || \
+           [[ $(get_yaml.py ${fine_tuning_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
         		       --snapshots ${expdir}/results/snapshot.ep.* \
@@ -273,9 +350,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            # ${recog_v2_opts}
             # --rnnlm ${lmexpdir}/rnnlm.model.best \
-            
+            # ${recog_v2_opts}
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 

@@ -32,7 +32,7 @@ dropout-rate: 0.1
 
 # transformer specific setting
 backend: pytorch
-model-module: "espnet.nets.pretrain_asr.e2e_asr_transformer_circular_ctc:E2E"
+model-module: "espnet.nets.pretrain_asr.e2e_asr_transformer_pretrain_ctc:E2E"
 transformer-input-layer: conv2d     # encoder architecture type
 transformer-lr: 1.0
 transformer-warmup-steps: 25000
@@ -48,7 +48,7 @@ train-mode: "text"
 
 # text encoder related
 text-elayers: 4
-ce-weight: 0.3
+ce-weight: 0.0
 # add-text-encoder: false
 
 # Report CER & WER
