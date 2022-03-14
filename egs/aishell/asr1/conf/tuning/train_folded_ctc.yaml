@@ -1,4 +1,7 @@
-# # network architecture
+# Sample config for "Layer Pruning on Demand with Intermediate CTC"
+# https://arxiv.org/abs/2106.09216
+
+# network architecture
 # encoder related
 elayers: 6
 eunits: 2048
@@ -46,3 +49,7 @@ stochastic-depth-rate: 0.0
 # folded ctc
 folded-elayers: 3
 repeat-times: 4
+
+# Report CER & WER
+report-cer: true
+report-wer: true

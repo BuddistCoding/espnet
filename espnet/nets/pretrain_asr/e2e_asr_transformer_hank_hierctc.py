@@ -6,6 +6,7 @@
 from argparse import Namespace
 import logging
 import math
+from re import L
 
 import chainer
 from chainer import reporter
@@ -42,19 +43,40 @@ from espnet.nets.scorers.ctc import CTCPrefixScorer
 from espnet.utils.cli_utils import strtobool
 from espnet.utils.fill_missing_args import fill_missing_args
 
+from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import (
+    LabelSmoothingLoss,  # noqa: H301
+)
+
+from espnet.nets.pytorch_backend.nets_utils import pad_list
+
 from espnet.nets.pretrain_asr.transformer.encoder import Encoder
 
 
 class Reporter(chainer.Chain):
     """A chainer reporter wrapper."""
 
-    def report(self, loss_ctc, cer_ctcs, loss, acc=0.0):
+    def report(self, loss_ctc, cer_ctcs, ce_loss, l2_loss, loss, acc=0.0):
 
         for i, lc in enumerate(loss_ctc):
             reporter.report({"loss_ctc{}".format(i): lc}, self)
 
         for i, cer in enumerate(cer_ctcs):
             reporter.report({"cer_ctc{}".format(i): cer}, self)
+        
+        for i, ce in enumerate(ce_loss):
+            reporter.report({"cross_entropy_loss{}".format(i): ce}, self)
+
+        reporter.report({"l2_loss between encoder and text_encoder": l2_loss}, self)
+
+        reporter.report({"loss": loss}, self)
+        reporter.report({"acc": acc}, self)
+
+class CE_Reporter(chainer.Chain):
+    """A chainer reporter wrapper."""
+
+    def report(self, ce_loss, loss, acc=0.0):
+
+
 
         reporter.report({"loss": loss}, self)
         reporter.report({"acc": acc}, self)
@@ -97,8 +119,14 @@ class E2E(ASRInterface, torch.nn.Module):
         )
 
         group.add_argument(
-            "--mode",
+            "--training-mode",
             default='asr',
+            type=str,
+        )
+
+        group.add_argument(
+            "--text-encoder-layer",
+            default="",
             type=str,
         )
 
@@ -129,12 +157,20 @@ class E2E(ASRInterface, torch.nn.Module):
 
         self.encoders = torch.nn.ModuleList()
         self.linears = torch.nn.ModuleList()
+        self.ce = []
         enc_each_nlayer = list(map(int, args.enc_each_nlayer.split(",")))
+        
+        text_encoder_layer = None
+
+        self.mode = args.training_mode
+        if (len(args.text_encoder_layer) > 0):
+            text_encoder_layer = list(map(int, args.text_encoder_layer.split(",")))
+            logging.warning(args.text_encoder_layer)
         if (args.pdim > 0):
             odim = [args.pdim, odim]
         else:
             odim = [odim]
-        assert len(odim) == len(enc_each_nlayer)
+        # assert len(odim) == len(enc_each_nlayer)
         for i in range(len(odim)):
             input_dim = idim if i == 0 else args.adim
             input_layer = args.transformer_input_layer if i == 0 else "identity"
@@ -181,6 +217,52 @@ class E2E(ASRInterface, torch.nn.Module):
                 )
             if i < len(odim) - 1:  # not for the last layer
                 self.linears.append(torch.nn.Linear(odim[i], args.adim))
+        if (len(text_encoder_layer) <= 0):
+            self.text_encoders = None
+            self.text_linears = None
+        else:
+            self.text_encoders = torch.nn.ModuleList()
+            self.text_linears = torch.nn.ModuleList()
+            for i in range(len(text_encoder_layer)):
+                self.text_encoders.append(
+                    Encoder(
+                        idim=odim[-1],
+                        selfattention_layer_type=args.transformer_encoder_selfattn_layer_type,
+                        attention_dim=args.adim,
+                        attention_heads=args.aheads,
+                        conv_wshare=args.wshare,
+                        conv_kernel_length=args.ldconv_encoder_kernel_length,
+                        conv_usebias=args.ldconv_usebias,
+                        linear_units=args.eunits,
+                        num_blocks=text_encoder_layer[i],
+                        input_layer='text_embedding',
+                        dropout_rate=args.dropout_rate,
+                        positional_dropout_rate=args.dropout_rate,
+                        attention_dropout_rate=args.transformer_attn_dropout_rate,
+                    )
+                )
+
+            for i in range(len(odim)):
+                self.text_linears.append(
+                    torch.nn.Linear(
+                        args.adim,
+                        odim[i]
+                    )
+                )
+
+                self.ce.append(
+                    LabelSmoothingLoss(
+                        odim[i],
+                        ignore_id,
+                        args.lsm_weight,
+                        args.transformer_length_normalized_loss,
+                    )
+                )
+
+            if (self.mode == 'asr'):
+                for model in self.text_encoders:
+                    for param in model.parameters():
+                        param.requires_grad = False
 
         # no decoder
         self.decoder = None
@@ -193,7 +275,8 @@ class E2E(ASRInterface, torch.nn.Module):
         self.reset_parameters(args)
         self.adim = args.adim  # used for CTC (equal to d_model)
 
-        self.mode = args.mode
+        
+        self.mse = torch.nn.MSELoss()
 
         # CTC
         self.feedback_ctc_result = args.feedback_ctc_result
@@ -224,6 +307,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
         logging.warning(f'condition:{self.feedback_ctc_result}')
         logging.warning(f'encoder:\n{self.encoders}')
+        logging.warning(f'Text encoder:\n{self.text_encoders}')
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -231,7 +315,6 @@ class E2E(ASRInterface, torch.nn.Module):
         initialize(self, args.transformer_init)
 
     def forward(self, xs_pad, ilens, ys_pad):
-
         ys_phn = None
         if len(ys_pad) == 1:
             ys_pad = ys_pad[0]
@@ -250,10 +333,11 @@ class E2E(ASRInterface, torch.nn.Module):
             logging.warning(f'ilens:{ilens}')
             assert (len(ilens) <= 2)
         
-        if self.mode == 'text' and self.training:
+        if self.mode == 'text':
             xs_pad = ys_pad
+            xs_pad[xs_pad == -1] = 0
             ilens = olens.tolist()
-        
+
         else:
             ilens = ilens.tolist()
 
@@ -265,54 +349,94 @@ class E2E(ASRInterface, torch.nn.Module):
         hs_mask = src_mask
         loss_ctcs = []
         cer_ctcs = []
+        l2_loss = None
         batch_size = xs_pad.size(0)
         itr = len(yss_pad)
 
-
-        
-        for i in range(itr):
-            if self.use_conformer:
-                tpl = hs_pad if i == 0 else (hs_pad, hs_posemb)
-                hs_pad, hs_posemb, hs_mask = self.encoders[i](tpl, hs_mask)
-            else:
-                # if (i == 0):
-                #     hs_pad, hs_mask = self.encoders[i].embed(hs_pad, hs_mask)
-                # for j, layer in enumerate(self.encoders[i].encoders):
-                #     hs_pad, hs_mask = layer(hs_pad, hs_mask)
-                hs_pad, hs_mask = self.encoders[i](hs_pad, hs_mask)
-                
-            hs_len = hs_mask.view(batch_size, -1).sum(1)
-            loss_ctcs.append(
-                self.ctcs[i](hs_pad.view(batch_size, -1, self.adim), hs_len, yss_pad[i])
-            )
-
-            if not self.training and self.error_calculators is not None:
-                ys_hat = self.ctcs[i].argmax(
-                    self.encoders[i].after_norm(hs_pad).view(batch_size, -1, self.adim)).data
-                cer_ctcs.append(
-                    self.error_calculators[i](
-                        ys_hat.cpu(), yss_pad[i].cpu(), is_ctc=True)
+        if (self.mode == 'asr'):   # asr mode
+            for i in range(itr):
+                if self.use_conformer:
+                    tpl = hs_pad if i == 0 else (hs_pad, hs_posemb)
+                    hs_pad, hs_posemb, hs_mask = self.encoders[i](tpl, hs_mask)
+                else:
+                    hs_pad, hs_mask = self.encoders[i](hs_pad, hs_mask)
+                    
+                hs_len = hs_mask.view(batch_size, -1).sum(1)
+                loss_ctcs.append(
+                    self.ctcs[i](hs_pad.view(batch_size, -1, self.adim), hs_len, yss_pad[i])
                 )
-            # for visualization
-            if i == itr - 1 and not self.training:
-                self.ctcs[i].softmax(self.encoders[i].after_norm(hs_pad))
 
-            if i < itr - 1 and self.feedback_ctc_result:
-                hs_pad = hs_pad + self.linears[i](self.ctcs[i].softmax(self.encoders[i].after_norm(hs_pad)))
+                if not self.training and self.error_calculators is not None:
+                    ys_hat = self.ctcs[i].argmax(
+                        self.encoders[i].after_norm(hs_pad).view(batch_size, -1, self.adim)).data
+                    cer_ctcs.append(
+                        self.error_calculators[i](
+                            ys_hat.cpu(), yss_pad[i].cpu(), is_ctc=True)
+                    )
+                # for visualization
+                if i == itr - 1 and not self.training:
+                    self.ctcs[i].softmax(self.encoders[i].after_norm(hs_pad))
 
-        self.loss = 0
-        loss_ctc_data = []
-        for i, lc in enumerate(loss_ctcs):
-            self.loss = self.loss + lc / itr
-            loss_ctc_data.append(float(lc))
+                if i < itr - 1 and self.feedback_ctc_result:
+                    hs_pad = hs_pad + self.linears[i](self.ctcs[i].softmax(self.encoders[i].after_norm(hs_pad)))
+                
+                if (len(self.text_encoder) > 0):
+                    # 1. Input the output of CTC into text encoder
+                    text_pad = self.ctc[-1].argmax(self.encoders[i].after_norm(hs_pad).view(batch_size, -1, self.adim)).data
+                    tlens = numpy.array([t.shape[0] for t in text_pad])
+                    text_pad = pad_list(text_pad, 0).to(xs_pad.device)
+                    text_pad = text_pad[:, :max(tlens)] # copied from line 326
+                    text_mask = make_non_pad_mask(tlens).to(xs_pad.device).unsqueeze(-2)
+                    
+                    for i in range(len(self.text_encoders)):
+                        text_pad, text_mask = self.text_encoders[i](text_pad, text_mask)
+                    l2_loss = self.mse(xs_pad, text_pad)
+                    
+            self.loss = 0
+            loss_ctc_data = []
+            for i, lc in enumerate(loss_ctcs):
+                self.loss = self.loss + lc / itr
+                loss_ctc_data.append(float(lc))
+            
+            if (l2_loss is not None):
+                self.loss = (self.loss + l2_loss) * 0.5
 
-        loss_data = float(self.loss)
-        if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
-            self.reporter.report(
-                loss_ctc_data, cer_ctcs, loss_data
-            )
-        else:
-            logging.warning("loss (=%f) is not correct", loss_data)
+            loss_data = float(self.loss)
+            if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
+                self.reporter.report(
+                    loss_ctc = loss_ctc_data,
+                    cer_ctcs = cer_ctcs,
+                    ce_loss = [],
+                    l2_loss = l2_loss,
+                    loss = loss_data
+                )
+            else:
+                logging.warning("loss (=%f) is not correct", loss_data)
+        
+        else:      # text mode
+            self.loss = 0.0
+            loss_ces = []
+            assert(self.text_encoders is not None), "text encoder dosen't exist"
+
+            for i in range(len(self.text_encoders)):
+                hs_pad, hs_mask = self.text_encoders[i](hs_pad, hs_mask)
+            hs_len = hs_mask.view(batch_size, -1).sum(1)
+            for i in range(itr):
+                loss_ces.append(self.ce[i](self.text_linears[i](hs_pad), yss_pad[i]))
+            self.loss = sum(loss_ces) / len(loss_ces)
+            
+            loss_data = float(self.loss)
+            if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
+                self.reporter.report(
+                    loss_ctc = [],
+                    cer_ctcs = [], 
+                    ce_loss = loss_ces,
+                    l2_loss = None,
+                    loss = loss_data
+                )
+            else:
+                logging.warning("loss (=%f) is not correct", loss_data)
+        
         return self.loss
 
     def scorers(self):

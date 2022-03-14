@@ -26,7 +26,7 @@ do_delta=false
 
 preprocess_config=conf/specaug.yaml
 train_config=conf/tuning/train_hier_ctc.yaml
-pretrain_config=conf/tuning/pretrain_pretrain_ctc.yaml
+pretrain_config=conf/tuning/pretrain_hier_ctc.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -293,25 +293,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --train-json ${feat_tr_dir}/data.json \
             --valid-json ${feat_dt_dir}/data.json \
             --phn_dict ${phn_dict}
-    
-    # echo "Fine-tuning with right side"
-    # ${cuda_cmd} --gpu ${ngpu} ${expdir}/fine_tuning_train.log \
-    #     asr_train.py \
-    #     --config ${fine_tuning_config} \
-    #     --preprocess-conf ${preprocess_config} \
-    #     --ngpu ${ngpu} \
-    #     --backend ${backend} \
-    #     --outdir ${expdir}/finetune_results \
-    #     --tensorboard-dir tensorboard/${expname} \
-    #     --debugmode ${debugmode} \
-    #     --dict ${dict} \
-    #     --debugdir ${expdir} \
-    #     --minibatches ${N} \
-    #     --verbose ${verbose} \
-    #     --resume ${resume_fine_tuning} \
-    #     --train-json ${feat_tr_dir}/data.json \
-    #     --valid-json ${feat_dt_dir}/data.json \
-    #     --phn_dict ${phn_dict}
+
 fi
 
 
