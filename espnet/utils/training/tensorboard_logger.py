@@ -1,5 +1,5 @@
 from chainer.training.extension import Extension
-
+import logging
 
 class TensorboardLogger(Extension):
     """A tensorboard logger extension"""

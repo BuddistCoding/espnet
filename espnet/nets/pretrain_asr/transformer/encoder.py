@@ -140,7 +140,7 @@ class Encoder(torch.nn.Module):
             self.conv_subsampling_factor = 4
         elif input_layer == "embed":
             self.embed = torch.nn.Sequential(
-                torch.nn.Embedding(idim, attention_dim, padding_idx=padding_idx),
+                torch.nn.Embedding(idim, attention_dim, padding_idx=0),
                 pos_enc_class(attention_dim, positional_dropout_rate),
             )
         elif isinstance(input_layer, torch.nn.Module):

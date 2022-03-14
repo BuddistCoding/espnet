@@ -430,7 +430,7 @@ def train(args):
 
 
     # phoneme dim
-    if (args.phn_ctc_weight > 0.0):
+    if ('pho_shape' in valid_json[utts[0]]["output"][0].keys()):
         args.pdim = int(valid_json[utts[0]]["output"][0]["pho_shape"].split(",")[-1])
         logging.info("#phoneme dims: " + str(args.pdim))
 
