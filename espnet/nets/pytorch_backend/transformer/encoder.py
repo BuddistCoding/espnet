@@ -152,10 +152,10 @@ class Encoder(torch.nn.Module):
             self.embed = torch.nn.Sequential(
                 pos_enc_class(attention_dim, positional_dropout_rate)
             )
-        elif input_layer == "identity":
-            self.embed = torch.nn.Identity()
-        elif input_layer == "text_embedding":
-            self.embed = torch.nn.Embedding(idim, attention_dim, padding_idx = 0)
+        # elif input_layer == "identity":
+        #     self.embed = torch.nn.Identity()
+        # elif input_layer == "text_embedding":
+        #     self.embed = torch.nn.Embedding(idim, attention_dim, padding_idx = 0)
         else:
             raise ValueError("unknown input_layer: " + input_layer)
         self.normalize_before = normalize_before

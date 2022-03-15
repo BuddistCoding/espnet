@@ -390,6 +390,7 @@ class E2E(ASRInterface, torch.nn.Module):
                     
                     for i in range(len(self.text_encoders)):
                         text_pad, text_mask = self.text_encoders[i](text_pad, text_mask)
+                    text_pad, text_mask = self.encoders[-1](text_pad, text_mask)
                     l2_loss = self.mse(xs_pad, text_pad)
                     
             self.loss = 0
@@ -497,7 +498,8 @@ class E2E(ASRInterface, torch.nn.Module):
                 isinstance(m, MultiHeadedAttention)
                 or isinstance(m, RelPositionMultiHeadedAttention)
             ):
-                ret[name] = m.attn.cpu().numpy()
+                if m.attn is not None:
+                    ret[name] = m.attn.cpu().numpy()
         self.train()
         return ret
 

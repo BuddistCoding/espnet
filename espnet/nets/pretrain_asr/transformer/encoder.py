@@ -138,7 +138,7 @@ class Encoder(torch.nn.Module):
         elif input_layer == "vgg2l":
             self.embed = VGG2L(idim, attention_dim)
             self.conv_subsampling_factor = 4
-        elif input_layer == "text_embed":
+        elif input_layer == "text_embedding":
             self.embed = torch.nn.Sequential(
                 torch.nn.Embedding(idim, attention_dim, padding_idx=padding_idx),
                 pos_enc_class(attention_dim, positional_dropout_rate),
