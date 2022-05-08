@@ -1116,8 +1116,8 @@ def recog(args):
 
     load_inputs_and_targets = LoadInputsAndTargets(
         mode="asr",
-        load_output=True, #False
-        sort_in_input_length=True, # False
+        load_output=False,
+        sort_in_input_length=False,
         preprocess_conf=train_args.preprocess_conf
         if args.preprocess_conf is None
         else args.preprocess_conf,
@@ -1159,7 +1159,7 @@ def recog(args):
                 feat = load_inputs_and_targets(batch)
                 # logging.warning(f'feat:{feat}')
                 feat = (
-                    [feat[0][0], feat[1][0]]
+                    feat[0][0]
                     if args.num_encs == 1
                     else [feat[idx][0] for idx in range(model.num_encs)]
                 )

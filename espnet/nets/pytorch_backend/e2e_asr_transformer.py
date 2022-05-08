@@ -350,6 +350,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
         logging.info("input lengths: " + str(h.size(0)))
         # search parms
+        
         beam = recog_args.beam_size
         penalty = recog_args.penalty
         ctc_weight = recog_args.ctc_weight
@@ -459,6 +460,9 @@ class E2E(ASRInterface, torch.nn.Module):
                 hyps_best_kept = sorted(
                     hyps_best_kept, key=lambda x: x["score"], reverse=True
                 )[:beam]
+            
+            # logging.warning(f'beam:{beam}')
+            # logging.warning(f'hyps_best_kept:{hyps_best_kept}')
 
             # sort and get nbest
             hyps = hyps_best_kept
@@ -474,6 +478,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 logging.info("adding <eos> in the last position in the loop")
                 for hyp in hyps:
                     hyp["yseq"].append(self.eos)
+            
 
             # add ended hypothes to a final list, and removed them from current hypothes
             # (this will be a probmlem, number of hyps < beam)
@@ -511,10 +516,12 @@ class E2E(ASRInterface, torch.nn.Module):
                     )
 
             logging.debug("number of ended hypothes: " + str(len(ended_hyps)))
-
+        
+        
         nbest_hyps = sorted(ended_hyps, key=lambda x: x["score"], reverse=True)[
             : min(len(ended_hyps), recog_args.nbest)
         ]
+
 
         # check number of hypotheis
         if len(nbest_hyps) == 0:
@@ -532,6 +539,7 @@ class E2E(ASRInterface, torch.nn.Module):
             "normalized log probability: "
             + str(nbest_hyps[0]["score"] / len(nbest_hyps[0]["yseq"]))
         )
+        
         return nbest_hyps
 
     def calculate_all_attentions(self, xs_pad, ilens, ys_pad):
