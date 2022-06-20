@@ -20,8 +20,8 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/specaug.yaml
-train_config=conf/tuning/train_pytorch_transformer.yaml
+preprocess_config=
+train_config=conf/train.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
@@ -34,15 +34,15 @@ ngramtag=
 n_gram=4
 
 # decoding parameter
-recog_model=model.acc.best # set a model to be used for `decoding: 'model.acc.best' or 'model.loss.best'
+recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
 n_average=10
 
 # data
-data=/mnt/nas3/ASR_Corpus
+data=/export/a05/xna/data
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="20220320_12layers_6dec" # tag for managing experiments.
+tag="" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -52,9 +52,9 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train
+train_set=train_sp
 train_dev=dev
-recog_set="train dev test"
+recog_set="dev test"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
@@ -152,24 +152,22 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     done
 fi
 
-# # you can skip this and remove --rnnlm option in the recognition (stage 5)
-# if [ -z ${lmtag} ]; then
-#     lmtag=$(basename ${lm_config%.*})
-# fi
-# lmexpname=train_rnnlm_${backend}_${lmtag}
-# lmexpdir=exp/${lmexpname}
-# mkdir -p ${lmexpdir}
+# you can skip this and remove --rnnlm option in the recognition (stage 5)
+if [ -z ${lmtag} ]; then
+    lmtag=$(basename ${lm_config%.*})
+fi
+lmexpname=train_rnnlm_${backend}_${lmtag}
+lmexpdir=exp/${lmexpname}
+mkdir -p ${lmexpdir}
 
-# ngramexpname=train_ngram
-# ngramexpdir=exp/${ngramexpname}
-# if [ -z ${ngramtag} ]; then
-#     ngramtag=${n_gram}
-# fi
-# mkdir -p ${ngramexpdir}
+ngramexpname=train_ngram
+ngramexpdir=exp/${ngramexpname}
+if [ -z ${ngramtag} ]; then
+    ngramtag=${n_gram}
+fi
+mkdir -p ${ngramexpdir}
 
-# skip_lm_training=true
-
-# if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ] && ${skip_lm_training}; then
+# if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
 #     echo "stage 3: LM Preparation"
 #     lmdatadir=data/local/lm_train
 #     mkdir -p ${lmdatadir}
@@ -207,7 +205,7 @@ if [ -z ${tag} ]; then
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/interctc/${expname}
+expdir=exp/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
@@ -232,14 +230,14 @@ fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
-    nj=16
+    nj=32
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots ${expdir}/results/snapshot.ep.{4?,50} \
+        		       --snapshots ${expdir}/results/snapshot.ep.* \
         		       --out ${expdir}/results/${recog_model} \
         		       --num ${n_average}
     fi
@@ -249,7 +247,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
              "(hence ngram is ignored)"
         recog_v2_opts=""
     else
-        recog_v2_opts=""
+        recog_v2_opts="--ngram-model ${ngramexpdir}/${n_gram}gram.bin --api v2"
     fi
 
     pids=() # initialize pids
@@ -273,9 +271,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            # ${recog_v2_opts}
-            # --rnnlm ${lmexpdir}/rnnlm.model.best \
-            
+            --rnnlm ${lmexpdir}/rnnlm.model.best \
+            ${recog_v2_opts}
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 
@@ -285,4 +282,30 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
     [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished"
+fi
+
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    echo "stage 6: Rescore BERT training"
+    # lmdatadir=data/local/lm_train
+    # mkdir -p ${lmdatadir}
+    # text2token.py -s 1 -n 1 data/train/text | cut -f 2- -d" " \
+    #     > ${lmdatadir}/train.txt
+    # text2token.py -s 1 -n 1 data/${train_dev}/text | cut -f 2- -d" " \
+    #     > ${lmdatadir}/valid.txt
+
+    # ${cuda_cmd} --gpu ${ngpu} ${lmexpdir}/train.log \
+    #     lm_train.py \
+    #     --config ${lm_config} \
+    #     --ngpu ${ngpu} \
+    #     --backend ${backend} \
+    #     --verbose 1 \
+    #     --outdir ${lmexpdir} \
+    #     --tensorboard-dir tensorboard/${lmexpname} \
+    #     --train-label ${lmdatadir}/train.txt \
+    #     --valid-label ${lmdatadir}/valid.txt \
+    #     --resume ${lm_resume} \
+    #     --dict ${dict}
+    
+    # lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
+    # build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
 fi
