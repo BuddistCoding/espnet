@@ -21,7 +21,7 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=
+preprocess_config=conf/specaug.yaml
 train_config=conf/train.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
@@ -46,7 +46,7 @@ use_lm_valbest_average=false # if true, the validation `lm_n_average`-best langu
 # Set this to somewhere where you want to put your data, or where
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
-datadir=/mnt/nas4/Jacky/ASR_Dataset
+datadir=
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -56,7 +56,7 @@ nbpe=5000
 bpemode=unigram
 
 # exp tag
-tag="rescoring_withLM" # tag for managing experiments.
+tag="" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -67,7 +67,7 @@ set -u
 set -o pipefail
 
 train_set=train_960
-train_sp=train_960
+train_sp=train_sp
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -102,15 +102,14 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             data/${x} exp/make_fbank/${x} ${fbankdir}
         utils/fix_data_dir.sh data/${x}
     done
-    
-    # speed perturb
-    # utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
-    # utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
-    # utils/perturb_data_dir_speed.sh 0.9  data/${train_set}_org  data/temp1
-    # utils/perturb_data_dir_speed.sh 1.0  data/${train_set}_org  data/temp2
-    # utils/perturb_data_dir_speed.sh 1.1  data/${train_set}_org  data/temp3
 
-    # utils/combine_data.sh --extra-files utt2uniq data/${train_sp}_org data/temp1 data/temp2 data/temp3
+    utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
+    utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
+    utils/perturb_data_dir_speed.sh 0.9  data/${train_set}_org  data/temp1
+    utils/perturb_data_dir_speed.sh 1.0  data/${train_set}_org  data/temp2
+    utils/perturb_data_dir_speed.sh 1.1  data/${train_set}_org  data/temp3
+
+    utils/combine_data.sh --extra-files utt2uniq data/${train_sp}_org data/temp1 data/temp2 data/temp3
 
     # remove utt having more than 3000 frames
     # remove utt having more than 400 characters

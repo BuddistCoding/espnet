@@ -7,44 +7,42 @@
 . ./cmd.sh || exit 1;
 
 # general configuration
-backend=pytorch # chainer or pytorch
-stage=0         # start from 0 if you need to start from data preparation
+backend=pytorch
+stage=0        # start from 0 if you need to start from data preparation
 stop_stage=100
-ngpu=1          # number of gpus ("0" uses cpu, otherwise use gpu)
+ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1
-dumpdir=dump    # directory to dump full features
-N=0             # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
-verbose=0       # verbose option
-resume=         # Resume the training from snapshot
-seed=1          # seed to generate random number
+dumpdir=dump   # directory to dump full features
+N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
+verbose=0      # verbose option
+resume=        # Resume the training from snapshot
 
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/no_preprocess.yaml  # use conf/specaug.yaml for data augmentation
+preprocess_config=
 train_config=conf/train.yaml
 lm_config=conf/lm.yaml
-decode_config=conf/decode.yaml
+decode_config=conf/tuning/decode_pytorch_transformer_noLM.yaml
 
 # rnnlm related
-skip_lm_training=false   # for only using end-to-end ASR model without LM
-lm_resume=        # specify a snapshot file to resume LM training
-lmtag=            # tag for managing LMs
+lm_resume=         # specify a snapshot file to resume LM training
+lmtag=             # tag for managing LMs
+
+# ngram
+ngramtag=
+n_gram=4
 
 # decoding parameter
 recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
-
-# model average realted (only for transformer)
-n_average=10                 # the number of ASR models to be averaged
-use_valbest_average=true     # if true, the validation `n_average`-best ASR models will be averaged.
-                             # if false, the last `n_average` ASR models will be averaged.
+n_average=10
 
 # data
-CSJDATATOP=/mnt/nas3/ASR_Corpus/CSJ-8th
-CSJVER=usb                          # see kaldi/egs/csj/s5/run.sh about the version
+data=/export/a05/xna/data
+data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="" # tag for managing experiments.
+tag="rescoring_withLM" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -54,22 +52,27 @@ set -e
 set -u
 set -o pipefail
 
-train_set_ori=train_nodup
-train_set=train_nodup
-train_dev=train_dev
-recog_set="eval1 eval2 eval3"
+train_set=train
+train_dev=dev
+recog_set="dev test"
+
+if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
+    echo "stage -1: Data Download"
+    local/download_and_untar.sh ${data} ${data_url} data_aishell
+    local/download_and_untar.sh ${data} ${data_url} resource_aishell
+fi
 
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     ### Task dependent. You have to make data the following preparation part by yourself.
     ### But you can utilize Kaldi recipes in most cases
-    echo "stage 0: Data Preparation"
-    local/csj_make_trans/csj_autorun.sh ${CSJDATATOP} data/csj-data ${CSJVER}
-    local/csj_data_prep.sh data/csj-data
-    for eval_num in eval1 eval2 eval3 ; do
-        local/csj_eval_data_prep.sh data/csj-data/eval ${eval_num}
-    done
-    for x in train eval1 eval2 eval3; do
-        local/csj_rm_tag_sp_space.sh data/${x}
+    echo "stage 0: Data preparation"
+    local/aishell_data_prep.sh ${data}/data_aishell/wav ${data}/data_aishell/transcript
+    # remove space in text
+    for x in train dev test; do
+        cp data/${x}/text data/${x}/text.org
+        paste -d " " <(cut -f 1 -d" " data/${x}/text.org) <(cut -f 2- -d" " data/${x}/text.org | tr -d " ") \
+            > data/${x}/text
+        rm data/${x}/text.org
     done
 fi
 
@@ -79,57 +82,48 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 1: Feature Generation"
-
-    # make a dev set
-    utils/subset_data_dir.sh --first data/train 4000 data/${train_dev} # 6hr 31min
-    n=$(($(wc -l < data/train/segments) - 4000))
-    utils/subset_data_dir.sh --last data/train ${n} data/train_nodev
-
-    # remove duplicated utterances
-    utils/data/remove_dup_utts.sh 300 data/train_nodev data/${train_set_ori} # 233hr 36min
-
-    # speed purturbation
-    # utils/perturb_data_dir_speed.sh 0.9 data/${train_set_ori} data/temp1
-    # utils/perturb_data_dir_speed.sh 1.0 data/${train_set_ori} data/temp2
-    # utils/perturb_data_dir_speed.sh 1.1 data/${train_set_ori} data/temp3
-    # utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
-    # rm -r data/temp1 data/temp2 data/temp3
-
-    # feature extraction
     fbankdir=fbank
-    for x in ${train_set} ${train_dev}; do
-        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} ${fbankdir}
-        utils/fix_data_dir.sh data/${x}
-        utils/validate_data_dir.sh data/${x}
-    done
-    for x in eval1 eval2 eval3; do
-        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 10 --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} ${fbankdir}
-        utils/fix_data_dir.sh data/${x}
-    done
+    # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+        data/train exp/make_fbank/train ${fbankdir}
+    utils/fix_data_dir.sh data/train
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 10 --write_utt2num_frames true \
+        data/dev exp/make_fbank/dev ${fbankdir}
+    utils/fix_data_dir.sh data/dev
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 10 --write_utt2num_frames true \
+        data/test exp/make_fbank/test ${fbankdir}
+    utils/fix_data_dir.sh data/test
+
+    # speed-perturbed
+    utils/perturb_data_dir_speed.sh 0.9 data/train data/temp1
+    utils/perturb_data_dir_speed.sh 1.0 data/train data/temp2
+    utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
+    utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
+    rm -r data/temp1 data/temp2 data/temp3
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+        data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
+    utils/fix_data_dir.sh data/${train_set}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
 
     # dump features for training
+    split_dir=$(echo $PWD | awk -F "/" '{print $NF "/" $(NF-1)}')
     if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
     utils/create_split_dir.pl \
-        /export/b{14,15,16,17}/${USER}/espnet-data/egs/csj/asr1/dump/${train_set}/delta${do_delta}/storage \
+        /export/a{11,12,13,14}/${USER}/espnet-data/egs/${split_dir}/dump/${train_set}/delta${do_delta}/storage \
         ${feat_tr_dir}/storage
     fi
     if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_dt_dir}/storage ]; then
     utils/create_split_dir.pl \
-        /export/b{14,15,16,17}/${USER}/espnet-data/egs/csj/asr1/dump/${train_dev}/delta${do_delta}/storage \
+        /export/a{11,12,13,14}/${USER}/espnet-data/egs/${split_dir}/dump/${train_dev}/delta${do_delta}/storage \
         ${feat_dt_dir}/storage
     fi
     dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} \
         data/${train_set}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/train ${feat_tr_dir}
-    dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} \
-        data/${train_dev}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/dev ${feat_dt_dir}
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
-        dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} \
+        dump.sh --cmd "$train_cmd" --nj 10 --do_delta ${do_delta} \
             data/${rtask}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
@@ -141,37 +135,43 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     echo "stage 2: Dictionary and Json Data Preparation"
     mkdir -p data/lang_1char/
+
+    echo "make a dictionary"
     echo "<unk> 1" > ${dict} # <unk> must be 1, 0 will be used for "blank" in CTC
-    text2token.py -s 1 -n 1 data/${train_set_ori}/text | cut -f 2- -d" " | tr " " "\n" \
+    text2token.py -s 1 -n 1 data/${train_set}/text | cut -f 2- -d" " | tr " " "\n" \
     | sort | uniq | grep -v -e '^\s*$' | awk '{print $0 " " NR+1}' >> ${dict}
     wc -l ${dict}
 
-    # make json labels
+    echo "make json files"
     data2json.sh --feat ${feat_tr_dir}/feats.scp \
-         data/${train_set} ${dict} > ${feat_tr_dir}/data.json
-    data2json.sh --feat ${feat_dt_dir}/feats.scp \
-         data/${train_dev} ${dict} > ${feat_dt_dir}/data.json
+		 data/${train_set} ${dict} > ${feat_tr_dir}/data.json
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \
-            data/${rtask} ${dict} > ${feat_recog_dir}/data.json
+		     data/${rtask} ${dict} > ${feat_recog_dir}/data.json
     done
 fi
 
-# You can skip this by setting skip_lm_training=true
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ] && ! ${skip_lm_training}; then
+# you can skip this and remove --rnnlm option in the recognition (stage 5)
+if [ -z ${lmtag} ]; then
+    lmtag=$(basename ${lm_config%.*})
+fi
+lmexpname=train_rnnlm_${backend}_${lmtag}
+lmexpdir=exp/${lmexpname}
+mkdir -p ${lmexpdir}
+
+ngramexpname=train_ngram
+ngramexpdir=exp/${ngramexpname}
+if [ -z ${ngramtag} ]; then
+    ngramtag=${n_gram}
+fi
+mkdir -p ${ngramexpdir}
+
+if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: LM Preparation"
-
-    if [ -z ${lmtag} ]; then
-        lmtag=$(basename ${lm_config%.*})
-    fi
-    lmexpname=train_rnnlm_${backend}_${lmtag}
-    lmexpdir=exp/${lmexpname}
-    mkdir -p ${lmexpdir}
-
     lmdatadir=data/local/lm_train
     mkdir -p ${lmdatadir}
-    text2token.py -s 1 -n 1 data/${train_set_ori}/text | cut -f 2- -d" " \
+    text2token.py -s 1 -n 1 data/train/text | cut -f 2- -d" " \
         > ${lmdatadir}/train.txt
     text2token.py -s 1 -n 1 data/${train_dev}/text | cut -f 2- -d" " \
         > ${lmdatadir}/valid.txt
@@ -188,23 +188,30 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ] && ! ${skip_lm_training}; then
         --valid-label ${lmdatadir}/valid.txt \
         --resume ${lm_resume} \
         --dict ${dict}
+    
+    lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
+    build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
 fi
+
 
 if [ -z ${tag} ]; then
     expname=${train_set}_${backend}_$(basename ${train_config%.*})
     if ${do_delta}; then
         expname=${expname}_delta
     fi
+    if [ -n "${preprocess_config}" ]; then
+        expname=${expname}_$(basename ${preprocess_config%.*})
+    fi
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/${expname}
+expdir=exp/rescoring/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     echo "stage 4: Network Training"
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-       asr_train.py \
+        asr_train.py \
         --config ${train_config} \
         --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
@@ -215,7 +222,6 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --dict ${dict} \
         --debugdir ${expdir} \
         --minibatches ${N} \
-        --seed ${seed} \
         --verbose ${verbose} \
         --resume ${resume} \
         --train-json ${feat_tr_dir}/data.json \
@@ -226,37 +232,28 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
-       [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
-       [[ $(get_yaml.py ${train_config} model-module) = *maskctc* ]] || \
-       [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
-       [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
-       average_opts=
-        if ${use_valbest_average}; then
-            recog_model=model.val${n_average}.avg.best
-            average_opts="--log ${expdir}/results/log"
-        else
-            recog_model=model.last${n_average}.avg.best
-        fi
+           [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
+           [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
+           [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
+        recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-            --snapshots ${expdir}/results/snapshot.ep.* \
-            --out ${expdir}/results/${recog_model} \
-            --num ${n_average} \
-            ${average_opts}
+        		       --snapshots ${expdir}/results/snapshot.ep.{4?,50} \
+        		       --out ${expdir}/results/${recog_model} \
+        		       --num ${n_average}
+    fi
+
+    if [[ $(get_yaml.py ${train_config} model-module) = *transducer* ]]; then
+        echo "[info]: transducer model does not support '--api v2'" \
+             "(hence ngram is ignored)"
+        recog_v2_opts=""
+    else
+        recog_v2_opts="--ngram-model ${ngramexpdir}/${n_gram}gram.bin --api v2"
     fi
 
     pids=() # initialize pids
     for rtask in ${recog_set}; do
     (
-        recog_opts=
-        if ${skip_lm_training}; then
-            if [ -z ${lmtag} ]; then
-                lmtag="nolm"
-            fi
-        else
-            recog_opts="--rnnlm ${lmexpdir}/rnnlm.model.best"
-        fi
-
-        decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_${lmtag}
+        decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_${lmtag}_${ngramtag}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data
@@ -270,13 +267,13 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --config ${decode_config} \
             --ngpu ${ngpu} \
             --backend ${backend} \
-            --debugmode ${debugmode} \
-            --verbose ${verbose} \
             --batchsize 0 \
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
-            --result-label ${expdir}/${decode_dir}/data.JOB.json \
+            --result-label train_pytorchrescoring_withoutLM/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            ${recog_opts}
+            ${recog_v2_opts}
+            # --rnnlm ${lmexpdir}/rnnlm.model.best \
+
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 

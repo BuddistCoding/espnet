@@ -20,7 +20,7 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=conf/specaug.yaml
+preprocess_config=
 train_config=conf/train.yaml
 lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
@@ -43,7 +43,7 @@ nbpe=500
 bpemode=unigram
 
 # exp tag
-tag="" # tag for managing experiments.
+tag="rescore_withLM" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -53,7 +53,7 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_trim_sp
+train_set=train_trim
 train_dev=dev_trim
 recog_set="dev test"
 
@@ -92,14 +92,14 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     remove_longshortdata.sh --maxchars 400 data/dev data/${train_dev}
 
     # speed-perturbed
-    utils/perturb_data_dir_speed.sh 0.9 data/train_trim data/temp1
-    utils/perturb_data_dir_speed.sh 1.0 data/train_trim data/temp2
-    utils/perturb_data_dir_speed.sh 1.1 data/train_trim data/temp3
-    utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
-    rm -r data/temp1 data/temp2 data/temp3
-    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
-        data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
-    utils/fix_data_dir.sh data/${train_set}
+    # utils/perturb_data_dir_speed.sh 0.9 data/train_trim data/temp1
+    # utils/perturb_data_dir_speed.sh 1.0 data/train_trim data/temp2
+    # utils/perturb_data_dir_speed.sh 1.1 data/train_trim data/temp3
+    # utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
+    # rm -r data/temp1 data/temp2 data/temp3
+    # steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+    #     data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
+    # utils/fix_data_dir.sh data/${train_set}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
