@@ -316,7 +316,7 @@ class CustomConverter(object):
         ).to(device)
 
         if ys_phn is None:
-            return xs_pad, ilens, [ys_pad]
+            return xs_pad, ilens, ys_pad
         else:
             ys_phn_pad = pad_list(
                 [

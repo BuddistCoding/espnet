@@ -313,7 +313,14 @@ class E2E(ASRInterface, torch.nn.Module):
             lpz = self.ctc.argmax(enc_output)
             collapsed_indices = [x[0] for x in groupby(lpz[0])]
             hyp = [x for x in filter(lambda x: x != self.blank, collapsed_indices)]
-            nbest_hyps = [{"score": 0.0, "yseq": [self.sos] + hyp}]
+            nbest_hyps = [
+                {
+                    "score": 0.0,
+                    "yseq": [self.sos] + hyp,
+                    "am_score": 0.0,
+                    "lm_score": 0.0,
+                }
+            ]
             if recog_args.beam_size > 1:
                 raise NotImplementedError("Pure CTC beam search is not implemented.")
             # TODO(hirofumi0810): Implement beam search
@@ -347,9 +354,15 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # initialize hypothesis
         if rnnlm:
-            hyp = {"score": 0.0, "yseq": [y], "rnnlm_prev": None}
+            hyp = {
+                "score": 0.0,
+                "yseq": [y],
+                "rnnlm_prev": None,
+                "am_score": 0.0,
+                "lm_score": 0.0,
+            }
         else:
-            hyp = {"score": 0.0, "yseq": [y]}
+            hyp = {"score": 0.0, "yseq": [y], "am_score": 0.0}
         if lpz is not None:
             ctc_prefix_score = CTCPrefixScore(lpz.detach().numpy(), 0, self.eos, numpy)
             hyp["ctc_state_prev"] = ctc_prefix_score.initial_state()
@@ -407,6 +420,7 @@ class E2E(ASRInterface, torch.nn.Module):
                     ] + ctc_weight * torch.from_numpy(
                         ctc_scores - hyp["ctc_score_prev"]
                     )
+
                     if rnnlm:
                         local_scores += (
                             recog_args.lm_weight * local_lm_scores[:, local_best_ids[0]]
@@ -426,8 +440,16 @@ class E2E(ASRInterface, torch.nn.Module):
                     new_hyp["yseq"] = [0] * (1 + len(hyp["yseq"]))
                     new_hyp["yseq"][: len(hyp["yseq"])] = hyp["yseq"]
                     new_hyp["yseq"][len(hyp["yseq"])] = int(local_best_ids[0, j])
+
+                    # add am score
+                    new_hyp["am_score"] = hyp["am_score"] + float(
+                        local_att_scores[0, local_best_ids[0, j]]
+                    )
                     if rnnlm:
                         new_hyp["rnnlm_prev"] = rnnlm_state
+                        new_hyp["lm_score"] = hyp["lm_score"] + float(
+                            local_lm_scores[0, local_best_ids[0, j]]
+                        )
                     if lpz is not None:
                         new_hyp["ctc_state_prev"] = ctc_states[joint_best_ids[0, j]]
                         new_hyp["ctc_score_prev"] = ctc_scores[joint_best_ids[0, j]]
@@ -437,6 +459,20 @@ class E2E(ASRInterface, torch.nn.Module):
                 hyps_best_kept = sorted(
                     hyps_best_kept, key=lambda x: x["score"], reverse=True
                 )[:beam]
+
+                # logging.warning(f"start")
+                # for hyp in hyps_best_kept:
+                    # logging.warning(f"hyp:{hyp['yseq']}")
+                    # if "am_score" in hyp.keys():
+                    #     logging.warning(f"hyps_best_kept am_score:{hyp['am_score']}")
+                    # if "ctc_score_prev" in hyp.keys():
+                    #     logging.warning(
+                    #         f"hyps_best_kept ctc_score:{hyp['ctc_score_prev']}"
+                    #     )
+                    # if "lm_score" in hyp.keys():
+                    #     logging.warning(f"hyps_best_kept lm_score:{hyp['lm_score']}")
+
+                    # logging.warning(f"hyps_best_kept score:{hyp['score']}")
 
             # sort and get nbest
             hyps = hyps_best_kept
@@ -466,6 +502,7 @@ class E2E(ASRInterface, torch.nn.Module):
                             hyp["score"] += recog_args.lm_weight * rnnlm.final(
                                 hyp["rnnlm_prev"]
                             )
+                            hyp["lm_score"] += rnnlm.final(hyp["rnnlm_prev"])
                         ended_hyps.append(hyp)
                 else:
                     remained_hyps.append(hyp)
