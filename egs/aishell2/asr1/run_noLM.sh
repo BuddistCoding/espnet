@@ -10,7 +10,7 @@
 backend=pytorch
 stage=0        # start from 0 if you need to start from data preparation
 stop_stage=100
-ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
+ngpu=2         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
@@ -20,26 +20,21 @@ resume=        # Resume the training from snapshot
 # feature configuration
 do_delta=false
 
-preprocess_config=
 train_config=conf/train.yaml
 lm_config=conf/lm.yaml
-decode_config=conf/tuning/decode_pytorch_transformer_noLM.yaml
+decode_config=conf/decode.yaml
 
 # rnnlm related
 lm_resume=         # specify a snapshot file to resume LM training
 lmtag=             # tag for managing LMs
 
-# ngram
-ngramtag=
-n_gram=4
-
 # decoding parameter
 recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
 n_average=10
 
-# data
-data=/export/a05/xna/data
-data_url=www.openslr.org/resources/33
+# data dir, modify this to your AISHELL-2 data path
+tr_dir=/home/backup_nfs/data-ASR/AIShell2/AISHELL-2/iOS/data
+dev_tst_dir=/home/work_nfs/common/data/AISHELL-DEV-TEST-SET
 
 # exp tag
 tag="rescoring_withoutLM" # tag for managing experiments.
@@ -53,25 +48,24 @@ set -u
 set -o pipefail
 
 train_set=train
-train_dev=dev
-recog_set="train"
-# recog_set="train dev test"
-
-if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
-    echo "stage -1: Data Download"
-    local/download_and_untar.sh ${data} ${data_url} data_aishell
-    local/download_and_untar.sh ${data} ${data_url} resource_aishell
-fi
+train_dev=dev_ios
+recog_set="dev_ios test_android test_ios test_mic"
 
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     ### Task dependent. You have to make data the following preparation part by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 0: Data preparation"
-    local/aishell_data_prep.sh ${data}/data_aishell/wav ${data}/data_aishell/transcript
-    # remove space in text
-    for x in train dev test; do
-        cp data/${x}/text data/${x}/text.org
-        paste -d " " <(cut -f 1 -d" " data/${x}/text.org) <(cut -f 2- -d" " data/${x}/text.org | tr -d " ") \
+    # For training set
+    local/prepare_data.sh ${tr_dir} data/local/train data/train || exit 1;
+    # # For dev and test set
+    for x in Android iOS Mic; do
+        local/prepare_data.sh ${dev_tst_dir}/${x}/dev data/local/dev_${x,,} data/dev_${x,,} || exit 1;
+        local/prepare_data.sh ${dev_tst_dir}/${x}/test data/local/test_${x,,} data/test_${x,,} || exit 1;
+    done 
+    # Normalize text to capital letters
+    for x in train dev_android dev_ios dev_mic test_android test_ios test_mic; do
+        mv data/${x}/text data/${x}/text.org
+        paste <(cut -f 1 data/${x}/text.org) <(cut -f 2 data/${x}/text.org | tr '[:lower:]' '[:upper:]') \
             > data/${x}/text
         rm data/${x}/text.org
     done
@@ -85,24 +79,26 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     echo "stage 1: Feature Generation"
     fbankdir=fbank
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
-    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 100 --write_utt2num_frames true \
         data/train exp/make_fbank/train ${fbankdir}
     utils/fix_data_dir.sh data/train
-    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 10 --write_utt2num_frames true \
-        data/dev exp/make_fbank/dev ${fbankdir}
-    utils/fix_data_dir.sh data/dev
-    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 10 --write_utt2num_frames true \
-        data/test exp/make_fbank/test ${fbankdir}
-    utils/fix_data_dir.sh data/test
-
+    for x in android ios mic; do
+        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 20 --write_utt2num_frames true \
+            data/dev_${x} exp/make_fbank/dev_${x} ${fbankdir}
+        utils/fix_data_dir.sh data/dev_${x}     
+        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 20 --write_utt2num_frames true \
+            data/test_${x} exp/make_fbank/test_${x} ${fbankdir}
+        utils/fix_data_dir.sh data/test_${x}
+    done
+    
     # speed-perturbed
     utils/perturb_data_dir_speed.sh 0.9 data/train data/temp1
     utils/perturb_data_dir_speed.sh 1.0 data/train data/temp2
     utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
     utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
     rm -r data/temp1 data/temp2 data/temp3
-    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
-        data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 100 --write_utt2num_frames true \
+    data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
     utils/fix_data_dir.sh data/${train_set}
 
     # compute global CMVN
@@ -120,11 +116,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         /export/a{11,12,13,14}/${USER}/espnet-data/egs/${split_dir}/dump/${train_dev}/delta${do_delta}/storage \
         ${feat_dt_dir}/storage
     fi
-    dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} \
+    dump.sh --cmd "$train_cmd" --nj 100 --do_delta ${do_delta} \
         data/${train_set}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/train ${feat_tr_dir}
+        
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
-        dump.sh --cmd "$train_cmd" --nj 10 --do_delta ${do_delta} \
+        dump.sh --cmd "$train_cmd" --nj 20 --do_delta ${do_delta} \
             data/${rtask}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
@@ -150,7 +147,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \
 		     data/${rtask} ${dict} > ${feat_recog_dir}/data.json
-    done
+    done   
 fi
 
 # you can skip this and remove --rnnlm option in the recognition (stage 5)
@@ -158,15 +155,8 @@ if [ -z ${lmtag} ]; then
     lmtag=$(basename ${lm_config%.*})
 fi
 lmexpname=train_rnnlm_${backend}_${lmtag}
-lmexpdir=exp/${lmexpname}
+lmexpdir=/home/work_nfs2/pcguo/model/aishell2/${lmexpname}
 mkdir -p ${lmexpdir}
-
-ngramexpname=train_ngram
-ngramexpdir=exp/${ngramexpname}
-if [ -z ${ngramtag} ]; then
-    ngramtag=${n_gram}
-fi
-mkdir -p ${ngramexpdir}
 
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: LM Preparation"
@@ -182,31 +172,24 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --config ${lm_config} \
         --ngpu ${ngpu} \
         --backend ${backend} \
-        --verbose 1 \
-        --outdir ${lmexpdir} \
-        --tensorboard-dir tensorboard/${lmexpname} \
+        --verbose ${verbose} \
+        --outdir ${lmexpdir}/results \
+        --tensorboard-dir ${lmexpdir}/tensorboard \
         --train-label ${lmdatadir}/train.txt \
         --valid-label ${lmdatadir}/valid.txt \
         --resume ${lm_resume} \
         --dict ${dict}
-    
-    lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
-    build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
 fi
-
 
 if [ -z ${tag} ]; then
     expname=${train_set}_${backend}_$(basename ${train_config%.*})
     if ${do_delta}; then
         expname=${expname}_delta
     fi
-    if [ -n "${preprocess_config}" ]; then
-        expname=${expname}_$(basename ${preprocess_config%.*})
-    fi
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/rescoring/${expname}
+expdir=/home/work_nfs2/pcguo/model/aishell2/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
@@ -214,11 +197,10 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
         asr_train.py \
         --config ${train_config} \
-        --preprocess-conf ${preprocess_config} \
         --ngpu ${ngpu} \
         --backend ${backend} \
         --outdir ${expdir}/results \
-        --tensorboard-dir tensorboard/${expname} \
+        --tensorboard-dir ${expdir}/tensorboard \
         --debugmode ${debugmode} \
         --dict ${dict} \
         --debugdir ${expdir} \
@@ -232,29 +214,21 @@ fi
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
     nj=32
+    recog_model=model.last${n_average}.avg.best
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
-        recog_model=model.last${n_average}.avg.best
-        average_checkpoints.py --backend ${backend} \
-        		       --snapshots exp/rescoring/results/snapshot.ep.{4?,50} \
-        		       --out ${expdir}/results/${recog_model} \
-        		       --num ${n_average}
+	recog_model=model.last${n_average}.avg.best
+	average_checkpoints.py --backend ${backend} \
+			       --snapshots ${expdir}/results/snapshot.ep.* \
+			       --out ${expdir}/results/${recog_model} \
+			       --num ${n_average}
     fi
-
-    if [[ $(get_yaml.py ${train_config} model-module) = *transducer* ]]; then
-        echo "[info]: transducer model does not support '--api v2'" \
-             "(hence ngram is ignored)"
-        recog_v2_opts=""
-    else
-        recog_v2_opts="--ngram-model ${ngramexpdir}/${n_gram}gram.bin --api v2"
-    fi
-
     pids=() # initialize pids
     for rtask in ${recog_set}; do
     (
-        decode_dir=decode_${rtask}_$(basename ${decode_config%.*})_${lmtag}_${ngramtag}
+        decode_dir=decode_${rtask}_avg_best_${lmtag}
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
 
         # split data
@@ -272,9 +246,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            # ${recog_v2_opts}
-            # --rnnlm ${lmexpdir}/rnnlm.model.best \
-
+            # --rnnlm ${lmexpdir}/rnnlm.model.best
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 

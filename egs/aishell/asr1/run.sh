@@ -42,7 +42,7 @@ data=/export/a05/xna/data
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="" # tag for managing experiments.
+tag="rescoring_withLM" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -52,9 +52,10 @@ set -e
 set -u
 set -o pipefail
 
-train_set=train_sp
+train_set=train
 train_dev=dev
-recog_set="dev test"
+recog_set="test"
+# recog_set="train dev test"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
@@ -189,8 +190,8 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --resume ${lm_resume} \
         --dict ${dict}
     
-    lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
-    build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
+    # lmplz --discount_fallback -o ${n_gram} <${lmdatadir}/train.txt > ${ngramexpdir}/${n_gram}gram.arpa
+    # build_binary -s ${ngramexpdir}/${n_gram}gram.arpa ${ngramexpdir}/${n_gram}gram.bin
 fi
 
 
@@ -205,7 +206,7 @@ if [ -z ${tag} ]; then
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/${expname}
+expdir=exp/rescoring/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
@@ -237,7 +238,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
            [[ $(get_yaml.py ${train_config} dtype) = custom ]]; then
         recog_model=model.last${n_average}.avg.best
         average_checkpoints.py --backend ${backend} \
-        		       --snapshots ${expdir}/results/snapshot.ep.* \
+        		       --snapshots exp/rescoring/results/snapshot.ep.{4?,50} \
         		       --out ${expdir}/results/${recog_model} \
         		       --num ${n_average}
     fi
@@ -272,7 +273,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
             --rnnlm ${lmexpdir}/rnnlm.model.best \
-            ${recog_v2_opts}
+            # ${recog_v2_opts}
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 

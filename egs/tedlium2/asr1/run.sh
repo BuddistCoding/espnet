@@ -55,7 +55,7 @@ set -o pipefail
 
 train_set=train_trim
 train_dev=dev_trim
-recog_set="dev test"
+recog_set="train_trim"
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
     echo "stage -1: Data Download"
@@ -157,6 +157,14 @@ else
 fi
 expdir=exp/${expname}
 mkdir -p ${expdir}
+
+if ! ${skip_lm_training}; then
+    if [ -z ${lmtag} ]; then
+        lmtag=$(basename ${lm_config%.*})
+    fi
+    lmexpname=train_rnnlm_${backend}_${lmtag}_${bpemode}${nbpe}
+    lmexpdir=exp/${lmexpname}
+fi
 
 # It takes a few days. If you just want to end-to-end ASR without LM,
 # you can skip this by setting skip_lm_training=true
