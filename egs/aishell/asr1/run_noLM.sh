@@ -42,7 +42,7 @@ data=/export/a05/xna/data
 data_url=www.openslr.org/resources/33
 
 # exp tag
-tag="rescoring_withoutLM" # tag for managing experiments.
+tag="rescoring_withoutLM_gpu" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -231,7 +231,7 @@ fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
-    nj=32
+    nj=16
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
            [[ $(get_yaml.py ${train_config} etype) = custom ]] || \
@@ -261,7 +261,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         splitjson.py --parts ${nj} ${feat_recog_dir}/data.json
 
         #### use CPU for decoding
-        ngpu=0
+        # ngpu=0
 
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             asr_recog.py \

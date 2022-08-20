@@ -302,6 +302,8 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
+        if recog_args.ngpu > 0:
+            x = torch.from_numpy(x).cuda()
         enc_output = self.encode(x).unsqueeze(0)
         if self.mtlalpha == 1.0:
             recog_args.ctc_weight = 1.0
@@ -364,7 +366,9 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             hyp = {"score": 0.0, "yseq": [y], "am_score": 0.0}
         if lpz is not None:
-            ctc_prefix_score = CTCPrefixScore(lpz.detach().numpy(), 0, self.eos, numpy)
+            ctc_prefix_score = CTCPrefixScore(
+                lpz.detach().cpu().numpy(), 0, self.eos, numpy  # origin should be numpy
+            )
             hyp["ctc_state_prev"] = ctc_prefix_score.initial_state()
             hyp["ctc_score_prev"] = 0.0
             if ctc_weight != 1.0:
@@ -386,8 +390,8 @@ class E2E(ASRInterface, torch.nn.Module):
                 vy[0] = hyp["yseq"][i]
 
                 # get nbest local scores and their ids
-                ys_mask = subsequent_mask(i + 1).unsqueeze(0)
-                ys = torch.tensor(hyp["yseq"]).unsqueeze(0)
+                ys_mask = subsequent_mask(i + 1).unsqueeze(0).cuda()
+                ys = torch.tensor(hyp["yseq"]).unsqueeze(0).cuda()
                 # FIXME: jit does not match non-jit result
                 if use_jit:
                     if traced_decoder is None:
@@ -409,9 +413,13 @@ class E2E(ASRInterface, torch.nn.Module):
                     local_scores = local_att_scores
 
                 if lpz is not None:
+                    local_att_scores = local_att_scores.detach().cpu()
                     local_best_scores, local_best_ids = torch.topk(
                         local_att_scores, ctc_beam, dim=1
                     )
+                    local_best_scores = local_best_scores.detach().cpu()
+                    local_best_ids = local_best_ids.detach().cpu()
+
                     ctc_scores, ctc_states = ctc_prefix_score(
                         hyp["yseq"], local_best_ids[0], hyp["ctc_state_prev"]
                     )
@@ -420,6 +428,7 @@ class E2E(ASRInterface, torch.nn.Module):
                     ] + ctc_weight * torch.from_numpy(
                         ctc_scores - hyp["ctc_score_prev"]
                     )
+                    # (ctc_scores - hyp["ctc_score_prev"])
 
                     if rnnlm:
                         local_scores += (
@@ -462,17 +471,17 @@ class E2E(ASRInterface, torch.nn.Module):
 
                 # logging.warning(f"start")
                 # for hyp in hyps_best_kept:
-                    # logging.warning(f"hyp:{hyp['yseq']}")
-                    # if "am_score" in hyp.keys():
-                    #     logging.warning(f"hyps_best_kept am_score:{hyp['am_score']}")
-                    # if "ctc_score_prev" in hyp.keys():
-                    #     logging.warning(
-                    #         f"hyps_best_kept ctc_score:{hyp['ctc_score_prev']}"
-                    #     )
-                    # if "lm_score" in hyp.keys():
-                    #     logging.warning(f"hyps_best_kept lm_score:{hyp['lm_score']}")
+                # logging.warning(f"hyp:{hyp['yseq']}")
+                # if "am_score" in hyp.keys():
+                #     logging.warning(f"hyps_best_kept am_score:{hyp['am_score']}")
+                # if "ctc_score_prev" in hyp.keys():
+                #     logging.warning(
+                #         f"hyps_best_kept ctc_score:{hyp['ctc_score_prev']}"
+                #     )
+                # if "lm_score" in hyp.keys():
+                #     logging.warning(f"hyps_best_kept lm_score:{hyp['lm_score']}")
 
-                    # logging.warning(f"hyps_best_kept score:{hyp['score']}")
+                # logging.warning(f"hyps_best_kept score:{hyp['score']}")
 
             # sort and get nbest
             hyps = hyps_best_kept
