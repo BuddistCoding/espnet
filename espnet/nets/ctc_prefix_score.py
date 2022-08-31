@@ -295,6 +295,7 @@ class CTCPrefixScore(object):
         # initial CTC state is made of a frame x 2 tensor that corresponds to
         # r_t^n(<sos>) and r_t^b(<sos>), where 0 and 1 of axis=1 represent
         # superscripts n and b (non-blank and blank), respectively.
+        # r = self.xp.full((self.input_length, 2), self.logzero, dtype=torch.float32)
         r = self.xp.full((self.input_length, 2), self.logzero, dtype=np.float32)
         r[0, 1] = self.x[0, self.blank]
         for i in six.moves.range(1, self.input_length):
@@ -313,6 +314,9 @@ class CTCPrefixScore(object):
         output_length = len(y) - 1  # ignore sos
         # new CTC states are prepared as a frame x (n or b) x n_labels tensor
         # that corresponds to r_t^n(h) and r_t^b(h).
+        # r = self.xp.rand((self.input_length, 2, len(cs)), dtype=torch.float32).to(
+        #     self.x.device
+        # )
         r = self.xp.ndarray((self.input_length, 2, len(cs)), dtype=np.float32)
         xs = self.x[:, cs]
         if output_length == 0:
@@ -327,6 +331,9 @@ class CTCPrefixScore(object):
         )  # log(r_t^n(g) + r_t^b(g))
         last = y[-1]
         if output_length > 0 and last in cs:
+            # log_phi = self.xp.rand(
+            #     (self.input_length, len(cs)), dtype=torch.float32
+            # ).to(self.x.device)
             log_phi = self.xp.ndarray((self.input_length, len(cs)), dtype=np.float32)
             for i in six.moves.range(len(cs)):
                 log_phi[:, i] = r_sum if cs[i] != last else r_prev[:, 1]
@@ -338,6 +345,9 @@ class CTCPrefixScore(object):
         start = max(output_length, 1)
         log_psi = r[start - 1, 0]
         for t in six.moves.range(start, self.input_length):
+            # print(r.shape)
+            # print(log_phi.shape)
+            # print(xs.shape)
             r[t, 0] = self.xp.logaddexp(r[t - 1, 0], log_phi[t - 1]) + xs[t]
             r[t, 1] = (
                 self.xp.logaddexp(r[t - 1, 0], r[t - 1, 1]) + self.x[t, self.blank]
@@ -356,4 +366,4 @@ class CTCPrefixScore(object):
 
         # return the log prefix probability and CTC states, where the label axis
         # of the CTC states is moved to the first axis to slice it easily
-        return log_psi, self.xp.rollaxis(r, 2)
+        return log_psi, self.xp.rollaxis(r, 2)  # self.xp.roll(r, 2)

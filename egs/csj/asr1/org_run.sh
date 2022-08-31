@@ -55,7 +55,7 @@ set -u
 set -o pipefail
 
 train_set_ori=train_nodup
-train_set=train_nodup
+train_set=train_nodup_sp
 train_dev=train_dev
 recog_set="eval1 eval2 eval3"
 

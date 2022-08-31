@@ -226,7 +226,9 @@ class CustomUpdater(StandardUpdater):
             self.model.parameters(), self.grad_clip_threshold
         )
         if math.isnan(grad_norm):
-            logging.warning(f"epoch:{self.epoch} : grad norm is nan. Do not update model.")
+            logging.warning(
+                f"epoch:{self.epoch} : grad norm is nan. Do not update model."
+            )
         else:
             optimizer.step()
         optimizer.zero_grad()
@@ -270,9 +272,9 @@ class CustomConverter(object):
         xs = None
         ys = None
         ys_phn = None
-        if (len(batch[0]) == 2):
+        if len(batch[0]) == 2:
             xs, ys = batch[0]
-        elif (len(batch[0]) == 3):
+        elif len(batch[0]) == 3:
             xs, ys, ys_phn = batch[0]
 
         # perform subsampling
@@ -312,17 +314,19 @@ class CustomConverter(object):
             ],
             self.ignore_id,
         ).to(device)
-        
-        
-        if (ys_phn is None) :
-            return xs_pad, ilens, [ys_pad]
+
+        if ys_phn is None:
+            return xs_pad, ilens, ys_pad
         else:
             ys_phn_pad = pad_list(
-            [
-                torch.from_numpy(
-                    np.array(y[0][:]) if isinstance(y, tuple) else y
-                ).long() for y in ys_phn
-            ],self.ignore_id).to(device)
+                [
+                    torch.from_numpy(
+                        np.array(y[0][:]) if isinstance(y, tuple) else y
+                    ).long()
+                    for y in ys_phn
+                ],
+                self.ignore_id,
+            ).to(device)
 
             return xs_pad, ilens, [ys_pad, ys_phn_pad]
 
@@ -422,12 +426,10 @@ def train(args):
         logging.info("stream{}: input dims : {}".format(i + 1, idim_list[i]))
     logging.info("#output dims: " + str(odim))
 
-
     # phoneme dim
-    if (args.phn_ctc_weight > 0.0):
+    if args.phn_ctc_weight > 0.0:
         args.pdim = int(valid_json[utts[0]]["output"][0]["pho_shape"].split(",")[-1])
         logging.info("#phoneme dims: " + str(args.pdim))
-
 
     # specify attention, CTC, hybrid mode
     if "transducer" in args.model_module:

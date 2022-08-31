@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import os
+from ossaudiodev import SNDCTL_COPR_WCODE
 import shutil
 import tempfile
 
@@ -490,7 +491,7 @@ else:
                     )
                 else:
                     plt.plot(times_probs, ctc_prob[:, idx])
-            plt.xlabel(u"Input [frame]", fontsize=12)
+            plt.xlabel("Input [frame]", fontsize=12)
             plt.ylabel("Posteriors", fontsize=12)
             plt.xticks(list(range(0, int(n_frames) + 1, 10)))
             plt.yticks(list(range(0, 2, 1)))
@@ -666,7 +667,7 @@ def add_gradient_noise(model, iteration, duration=100, eta=1.0, scale_factor=0.5
         scale_factor (float) {0.55}: The scale of `sigma`.
     """
     interval = (iteration // duration) + 1
-    sigma = eta / interval ** scale_factor
+    sigma = eta / interval**scale_factor
     for param in model.parameters():
         if param.grad is not None:
             _shape = param.grad.size()
@@ -833,14 +834,24 @@ def parse_hypothesis(hyp, char_list):
     # remove sos and get results
     tokenid_as_list = list(map(int, hyp["yseq"][1:]))
     token_as_list = [char_list[idx] for idx in tokenid_as_list]
-    score = float(hyp["score"])
+    score = float(np.round(hyp["score"], decimals = 5))
+    am_score = float(np.round(hyp["am_score"], decimals = 5))
 
     # convert to string
     tokenid = " ".join([str(idx) for idx in tokenid_as_list])
     token = " ".join(token_as_list)
     text = "".join(token_as_list).replace("<space>", " ")
 
-    return text, token, tokenid, score
+    if "ctc_score_prev" in hyp.keys():
+        ctc_score = float(np.round(hyp["ctc_score_prev"], decimals = 5))
+    else:
+        ctc_score = None
+    if "lm_score" in hyp.keys():
+        lm_score = float(np.round(hyp["lm_score"], decimals = 5))
+    else:
+        lm_score = None
+
+    return text, token, tokenid, score, am_score, ctc_score, lm_score
 
 
 def add_results_to_json(js, nbest_hyps, char_list):
@@ -863,7 +874,15 @@ def add_results_to_json(js, nbest_hyps, char_list):
 
     for n, hyp in enumerate(nbest_hyps, 1):
         # parse hypothesis
-        rec_text, rec_token, rec_tokenid, score = parse_hypothesis(hyp, char_list)
+        (
+            rec_text,
+            rec_token,
+            rec_tokenid,
+            score,
+            am_score,
+            ctc_score,
+            lm_score,
+        ) = parse_hypothesis(hyp, char_list)
 
         # copy ground-truth
         if len(js["output"]) > 0:
@@ -880,6 +899,13 @@ def add_results_to_json(js, nbest_hyps, char_list):
         out_dic["rec_token"] = rec_token
         out_dic["rec_tokenid"] = rec_tokenid
         out_dic["score"] = score
+        # add AM and LM score
+        if am_score != None:
+            out_dic["am_score"] = am_score
+        if lm_score != None:
+            out_dic["lm_score"] = lm_score
+        if ctc_score != None:
+            out_dic["ctc_score"] = round(ctc_score, 5)
 
         # add to list of N-best result dicts
         new_js["output"].append(out_dic)
@@ -889,7 +915,6 @@ def add_results_to_json(js, nbest_hyps, char_list):
             if "text" in out_dic.keys():
                 logging.info("groundtruth: %s" % out_dic["text"])
             logging.info("prediction : %s" % out_dic["rec_text"])
-
     return new_js
 
 

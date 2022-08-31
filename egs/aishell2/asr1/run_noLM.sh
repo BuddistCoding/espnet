@@ -10,7 +10,7 @@
 backend=pytorch
 stage=0        # start from 0 if you need to start from data preparation
 stop_stage=100
-ngpu=1       # number of gpus ("0" uses cpu, otherwise use gpu)
+ngpu=2         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1
 dumpdir=dump   # directory to dump full features
 N=0            # number of minibatches to be used (mainly for debugging). "0" uses all minibatches.
@@ -37,7 +37,7 @@ tr_dir=/home/backup_nfs/data-ASR/AIShell2/AISHELL-2/iOS/data
 dev_tst_dir=/home/work_nfs/common/data/AISHELL-DEV-TEST-SET
 
 # exp tag
-tag="rescoring_withLM" # tag for managing experiments.
+tag="rescoring_withoutLM" # tag for managing experiments.
 
 . utils/parse_options.sh || exit 1;
 
@@ -92,14 +92,14 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     done
     
     # speed-perturbed
-    # utils/perturb_data_dir_speed.sh 0.9 data/train data/temp1
-    # utils/perturb_data_dir_speed.sh 1.0 data/train data/temp2
-    # utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
-    # utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
-    # rm -r data/temp1 data/temp2 data/temp3
-    # steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 100 --write_utt2num_frames true \
-    # data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
-    # utils/fix_data_dir.sh data/${train_set}
+    utils/perturb_data_dir_speed.sh 0.9 data/train data/temp1
+    utils/perturb_data_dir_speed.sh 1.0 data/train data/temp2
+    utils/perturb_data_dir_speed.sh 1.1 data/train data/temp3
+    utils/combine_data.sh --extra-files utt2uniq data/${train_set} data/temp1 data/temp2 data/temp3
+    rm -r data/temp1 data/temp2 data/temp3
+    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 100 --write_utt2num_frames true \
+    data/${train_set} exp/make_fbank/${train_set} ${fbankdir}
+    utils/fix_data_dir.sh data/${train_set}
 
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
@@ -155,7 +155,7 @@ if [ -z ${lmtag} ]; then
     lmtag=$(basename ${lm_config%.*})
 fi
 lmexpname=train_rnnlm_${backend}_${lmtag}
-lmexpdir=exp/${lmexpname}
+lmexpdir=/home/work_nfs2/pcguo/model/aishell2/${lmexpname}
 mkdir -p ${lmexpdir}
 
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
@@ -189,7 +189,7 @@ if [ -z ${tag} ]; then
 else
     expname=${train_set}_${backend}_${tag}
 fi
-expdir=exp/${expname}
+expdir=/home/work_nfs2/pcguo/model/aishell2/${expname}
 mkdir -p ${expdir}
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
@@ -213,7 +213,7 @@ fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
-    nj=8
+    nj=32
     recog_model=model.last${n_average}.avg.best
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
            [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
@@ -246,7 +246,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --recog-json ${feat_recog_dir}/split${nj}utt/data.JOB.json \
             --result-label ${expdir}/${decode_dir}/data.JOB.json \
             --model ${expdir}/results/${recog_model}  \
-            --rnnlm ${lmexpdir}/rnnlm.model.best
+            # --rnnlm ${lmexpdir}/rnnlm.model.best
 
         score_sclite.sh ${expdir}/${decode_dir} ${dict}
 
