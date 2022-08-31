@@ -22,11 +22,12 @@ category=""
 out="" # If omitted, write in stdout
 
 text=""
+phn_text=""
 multilingual=false
 
 help_message=$(cat << EOF
-Usage: $0 <data-dir> <dict>
-e.g. $0 data/train data/lang_1char/train_units.txt
+Usage: $0 <data-dir> <dict> <phn-dict>
+e.g. $0 data/train data/lang_1char/train_units.txt [data/lang_1char/train_phn_units.txt] <- this is optional
 Options:
   --nj <nj>                                        # number of parallel jobs
   --cmd (utils/run.pl|utils/queue.pl <queue opts>) # how to run jobs.
@@ -40,7 +41,8 @@ EOF
 )
 . utils/parse_options.sh
 
-if [ $# != 2 ]; then
+
+if [ $# != 2 ] && [ $# != 3 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
@@ -49,11 +51,22 @@ set -euo pipefail
 
 dir=$1
 dic=$2
+phn_dic=
+
+if [ $# == 3 ]; then
+    phn_dic=$3
+fi
+
+
 tmpdir=$(mktemp -d ${dir}/tmp-XXXXX)
 trap 'rm -rf ${tmpdir}' EXIT
 
 if [ -z ${text} ]; then
     text=${dir}/text
+fi
+
+if [ -z ${phn_text} ]; then
+    phn_text=${dir}/phn_text
 fi
 
 # 1. Create scp files for inputs
@@ -100,14 +113,32 @@ elif [ -n "${nlsyms}" ]; then
     text2token.py -s 1 -n 1 -l ${nlsyms} ${text} --trans_type ${trans_type} > ${tmpdir}/output/token.scp
 else
     text2token.py -s 1 -n 1 ${text} --trans_type ${trans_type} > ${tmpdir}/output/token.scp
+
+    if [ $# == 3 ]; then
+        text2token.py -s 1 -n 1 ${phn_text} --trans_type zhphn > ${tmpdir}/output/phoneme.scp
+    fi
 fi
 < ${tmpdir}/output/token.scp utils/sym2int.pl --map-oov ${oov} -f 2- ${dic} > ${tmpdir}/output/tokenid.scp
+
+if [ $# == 3 ]; then
+    < ${tmpdir}/output/phoneme.scp utils/sym2int.pl --map-oov ${oov} -f 2- ${phn_dic} > ${tmpdir}/output/phonemeid.scp
+fi
 # +2 comes from CTC blank and EOS
-vocsize=$(tail -n 1 ${dic} | awk '{print $2}')
+vocsize=$(tail -n 1 ${dic} | awk '{print $2}') # 取dict的最後一行，將第二欄print出來
 odim=$(echo "$vocsize + 2" | bc)
 < ${tmpdir}/output/tokenid.scp awk -v odim=${odim} '{print $1 " " NF-1 "," odim}' > ${tmpdir}/output/shape.scp
 
 cat ${text} > ${tmpdir}/output/text.scp
+
+pdim=
+if [ $# == 3 ]; then
+    phosize=$(tail -n 1 ${phn_dic} | awk '{print $2}')
+    pdim=$(echo "$phosize + 2" | bc)
+    < ${tmpdir}/output/phonemeid.scp awk -v pdim=${pdim} '{print $1 " " NF-1 "," pdim}' > ${tmpdir}/output/pho_shape.scp
+
+    cat ${phn_text} > ${tmpdir}/output/phoneme.scp
+fi
+
 
 
 # 3. Create scp files for the others

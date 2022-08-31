@@ -9,6 +9,8 @@ import codecs
 import re
 import sys
 
+from pypinyin import pinyin, lazy_pinyin, Style
+
 is_python2 = sys.version_info[0] == 2
 
 
@@ -54,7 +56,7 @@ def get_parser():
         "-t",
         type=str,
         default="char",
-        choices=["char", "phn"],
+        choices=["char", "phn", "zhphn"],
         help="""Transcript type. char/phn. e.g., for TIMIT FADG0_SI1279 -
                         If trans_type is char,
                         read from SI1279.WRD file -> "bricks are an alternative"
@@ -104,6 +106,8 @@ def main():
 
         if args.trans_type == "phn":
             a = a.split(" ")
+        elif args.trans_type == "zhphn":
+            a = a.split()
         else:
             if len(match_pos) > 0:
                 chars = []

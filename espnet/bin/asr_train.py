@@ -70,6 +70,7 @@ def get_parser(parser=None, required=True):
     )
     parser.add_argument("--debugmode", default=1, type=int, help="Debugmode")
     parser.add_argument("--dict", required=required, help="Dictionary")
+    parser.add_argument("--phn_dict", required=required, help="Phoneme Dictionary")
     parser.add_argument("--seed", default=1, type=int, help="Random seed")
     parser.add_argument("--debugdir", type=str, help="Output directory for debugging")
     parser.add_argument(
@@ -145,6 +146,7 @@ def get_parser(parser=None, required=True):
         help="Multitask learning coefficient, "
         "alpha: alpha*ctc_loss + (1-alpha)*att_loss ",
     )
+
     parser.add_argument(
         "--lsm-weight", default=0.0, type=float, help="Label smoothing weight"
     )
@@ -610,6 +612,18 @@ def main(cmd_args):
         args.char_list = char_list
     else:
         args.char_list = None
+    
+    # load phoneme dictionary 
+    if args.phn_dict is not None:
+        with open (args.phn_dict,"rb") as f:
+            dictionary = f.readlines()
+        pho_list = [entry.decode("utf-8").split(" ")[0] for entry in dictionary]
+        pho_list.insert(0, "<blank>")
+        pho_list.append("<eos>")
+
+        args.pho_list = pho_list
+    else:
+        args.pho_list = None
 
     # train
     logging.info("backend = " + args.backend)

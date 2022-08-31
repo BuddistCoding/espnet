@@ -225,9 +225,8 @@ class CustomUpdater(StandardUpdater):
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), self.grad_clip_threshold
         )
-        logging.info("grad norm={}".format(grad_norm))
         if math.isnan(grad_norm):
-            logging.warning("grad norm is nan. Do not update model.")
+            logging.warning(f"epoch:{self.epoch} : grad norm is nan. Do not update model.")
         else:
             optimizer.step()
         optimizer.zero_grad()
@@ -268,7 +267,13 @@ class CustomConverter(object):
         """
         # batch should be located in list
         assert len(batch) == 1
-        xs, ys = batch[0]
+        xs = None
+        ys = None
+        ys_phn = None
+        if (len(batch[0]) == 2):
+            xs, ys = batch[0]
+        elif (len(batch[0]) == 3):
+            xs, ys, ys_phn = batch[0]
 
         # perform subsampling
         if self.subsampling_factor > 1:
@@ -307,8 +312,19 @@ class CustomConverter(object):
             ],
             self.ignore_id,
         ).to(device)
+        
+        
+        if (ys_phn is None) :
+            return xs_pad, ilens, [ys_pad]
+        else:
+            ys_phn_pad = pad_list(
+            [
+                torch.from_numpy(
+                    np.array(y[0][:]) if isinstance(y, tuple) else y
+                ).long() for y in ys_phn
+            ],self.ignore_id).to(device)
 
-        return xs_pad, ilens, ys_pad
+            return xs_pad, ilens, [ys_pad, ys_phn_pad]
 
 
 class CustomConverterMulEnc(object):
@@ -405,6 +421,13 @@ def train(args):
     for i in range(args.num_encs):
         logging.info("stream{}: input dims : {}".format(i + 1, idim_list[i]))
     logging.info("#output dims: " + str(odim))
+
+
+    # phoneme dim
+    if (args.phn_ctc_weight > 0.0):
+        args.pdim = int(valid_json[utts[0]]["output"][0]["pho_shape"].split(",")[-1])
+        logging.info("#phoneme dims: " + str(args.pdim))
+
 
     # specify attention, CTC, hybrid mode
     if "transducer" in args.model_module:
