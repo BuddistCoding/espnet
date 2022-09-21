@@ -431,6 +431,7 @@ class E2E(ASRInterface, torch.nn.Module):
                     # (ctc_scores - hyp["ctc_score_prev"])
 
                     if rnnlm:
+                        local_lm_scores = local_lm_scores.clone().detach().cpu()
                         local_scores += (
                             recog_args.lm_weight * local_lm_scores[:, local_best_ids[0]]
                         )

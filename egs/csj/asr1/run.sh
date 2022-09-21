@@ -40,7 +40,7 @@ use_valbest_average=true     # if true, the validation `n_average`-best ASR mode
                              # if false, the last `n_average` ASR models will be averaged.
 
 # data
-CSJDATATOP=/mnt/nas3/ASR_Corpus/CSJ-8th
+CSJDATATOP=/mnt/disk3/ASR_Corpus/CSJ-8th
 CSJVER=usb                          # see kaldi/egs/csj/s5/run.sh about the version
 
 # exp tag
@@ -57,7 +57,7 @@ set -o pipefail
 train_set_ori=train_nodup
 train_set=train_nodup
 train_dev=train_dev
-recog_set="eval1 eval2 eval3"
+recog_set="train_nodup"
 
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
     ### Task dependent. You have to make data the following preparation part by yourself.
@@ -159,15 +159,17 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
 fi
 
 # You can skip this by setting skip_lm_training=true
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ] && ! ${skip_lm_training}; then
-    echo "stage 3: LM Preparation"
-
+if ! ${skip_lm_training}; then
     if [ -z ${lmtag} ]; then
         lmtag=$(basename ${lm_config%.*})
     fi
     lmexpname=train_rnnlm_${backend}_${lmtag}
     lmexpdir=exp/${lmexpname}
     mkdir -p ${lmexpdir}
+fi
+
+if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ] && ! ${skip_lm_training}; then
+    echo "stage 3: LM Preparation"
 
     lmdatadir=data/local/lm_train
     mkdir -p ${lmdatadir}
@@ -224,7 +226,7 @@ fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo "stage 5: Decoding"
-    nj=32
+    nj=4
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
        [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \
        [[ $(get_yaml.py ${train_config} model-module) = *maskctc* ]] || \
@@ -263,7 +265,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         splitjson.py --parts ${nj} ${feat_recog_dir}/data.json
 
         #### use CPU for decoding
-        ngpu=0
+        # ngpu=0
 
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
             asr_recog.py \
