@@ -8,9 +8,9 @@
 
 # general configuration
 backend=pytorch
-stage=-1       # start from -1 if you need to start from data download
-stop_stage=100
-ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
+stage=3       # start from -1 if you need to start from data download
+stop_stage=3
+ngpu=4         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
 debugmode=1
 dumpdir=dump   # directory to dump full features
@@ -46,7 +46,7 @@ use_lm_valbest_average=false # if true, the validation `lm_n_average`-best langu
 # Set this to somewhere where you want to put your data, or where
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
-datadir=
+datadir=/work/jason90255/ASR_Corpus/Librispeech
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -67,7 +67,7 @@ set -u
 set -o pipefail
 
 train_set=train_960
-train_sp=train_sp
+train_sp=train_960 # train_sp
 train_dev=dev
 recog_set="test_clean test_other dev_clean dev_other"
 
@@ -105,11 +105,11 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
 
     utils/combine_data.sh --extra_files utt2num_frames data/${train_set}_org data/train_clean_100 data/train_clean_360 data/train_other_500
     utils/combine_data.sh --extra_files utt2num_frames data/${train_dev}_org data/dev_clean data/dev_other
-    utils/perturb_data_dir_speed.sh 0.9  data/${train_set}_org  data/temp1
-    utils/perturb_data_dir_speed.sh 1.0  data/${train_set}_org  data/temp2
-    utils/perturb_data_dir_speed.sh 1.1  data/${train_set}_org  data/temp3
+    # utils/perturb_data_dir_speed.sh 0.9  data/${train_set}_org  data/temp1
+    # utils/perturb_data_dir_speed.sh 1.0  data/${train_set}_org  data/temp2
+    # utils/perturb_data_dir_speed.sh 1.1  data/${train_set}_org  data/temp3
 
-    utils/combine_data.sh --extra-files utt2uniq data/${train_sp}_org data/temp1 data/temp2 data/temp3
+    # utils/combine_data.sh --extra-files utt2uniq data/${train_sp}_org data/temp1 data/temp2 data/temp3
 
     # remove utt having more than 3000 frames
     # remove utt having more than 400 characters
@@ -117,8 +117,8 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_sp}_org data/${train_sp}
     remove_longshortdata.sh --maxframes 3000 --maxchars 400 data/${train_dev}_org data/${train_dev}
     steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj $nj  --write_utt2num_frames true \
-            data/train_sp  exp/make_fbank/train_sp  ${fbankdir}
-    utils/fix_data_dir.sh data/train_sp
+            data/${train_sp}  exp/make_fbank/${train_sp}  ${fbankdir}
+    utils/fix_data_dir.sh data/${train_sp}
     # compute global CMVN
     compute-cmvn-stats scp:data/${train_sp}/feats.scp data/${train_sp}/cmvn.ark
 
