@@ -8,8 +8,8 @@
 
 # general configuration
 backend=pytorch
-stage=-1       # start from -1 if you need to start from data download
-stop_stage=100
+stage=4       # start from -1 if you need to start from data download
+stop_stage=5
 ngpu=8         # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=32
 debugmode=1
@@ -22,10 +22,10 @@ resume=        # Resume the training from snapshot
 do_delta=false
 
 preprocess_config=
-train_config=conf/train.yaml # current default recipe requires 4 gpus.
+train_config=conf/tuning/train_pytorch_transformer.yaml # current default recipe requires 4 gpus.
                              # if you do not have 4 gpus, please reconfigure the `batch-bins` and `accum-grad` parameters in config.
 lm_config=conf/lm.yaml
-decode_config=conf/decode.yaml
+decode_config=conf/tuning/decode_pytorch_transformer.yaml
 
 # rnnlm related
 lm_resume= # specify a snapshot file to resume LM training
@@ -46,7 +46,7 @@ use_lm_valbest_average=false # if true, the validation `lm_n_average`-best langu
 # Set this to somewhere where you want to put your data, or where
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
-datadir=/mnt/nas4/Jacky/ASR_Dataset
+datadir=/work/jason90255/ASR_Corpus/Librispeech
 
 # base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -296,7 +296,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
         splitjson.py --parts ${nj} ${feat_recog_dir}/data_${bpemode}${nbpe}.json
 
         #### use CPU for decoding
-        ngpu=0
+        ngpu=1
 
         # set batchsize 0 to disable batch decoding
         ${decode_cmd} JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
